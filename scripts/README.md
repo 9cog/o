@@ -1,8 +1,16 @@
+# Scripts
 
-How to use gdb
---------------
-Copy either `.gbdinit` or `.gdbinit-print-opencog` to `~/.gbdinit`
-That is, to your home directory.
+## .gdbinit
+
+Copy `.gdbinit` or `.gdbinit-print-opencog` to `~/.gdbinit`
+(That is, to your home directory.)
+
+## util
+
+Contains scripts related to cogutil, under the `util` folder, in
+particular for manipulating log files, such as filtering according to
+component name or log level, as well as sorting according to some
+given order.
 
 
 How to use Valgrind suppressions
