@@ -1,0 +1,110 @@
+/*
+ * tests/atoms/IdenticalLinkUTest.cxxtest
+ *
+ * Copyright (C) 2018 SingularityNET Foundation
+ * All Rights Reserved
+ *
+ * Author: Nil Geisweiller
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License v3 as
+ * published by the Free Software Foundation and including the exceptions
+ * at http://opencog.org/wiki/Licenses
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program; if not, write to:
+ * Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
+
+#include <opencog/atomspace/AtomSpace.h>
+
+using namespace opencog;
+
+class IdenticalLinkUTest :  public CxxTest::TestSuite
+{
+private:
+	AtomSpace _as;
+
+public:
+	IdenticalLinkUTest()
+	{
+		logger().set_print_to_stdout_flag(true);
+		logger().set_timestamp_flag(false);
+	}
+
+	void setUp() {}
+
+	void tearDown() {}
+
+	void test_identical();
+	void test_identical_variable();
+};
+
+#define N _as.add_node
+#define L _as.add_link
+
+// Basic test
+void IdenticalLinkUTest::test_identical()
+{
+	logger().info("BEGIN TEST: %s", __FUNCTION__);
+
+	Handle A = N(CONCEPT_NODE, "A");
+	Handle B = N(CONCEPT_NODE, "B");
+
+	// Test bevaluate() on naked links
+	Handle AA = createLink(IDENTICAL_LINK, A, A);
+	Handle AAA = createLink(IDENTICAL_LINK, A, A, A);
+
+	bool result = AA->bevaluate(&_as);
+	TS_ASSERT(result);
+
+	result = AAA->bevaluate(&_as);
+	TS_ASSERT(result);
+
+	// Adding identical atoms to AtomSpace should succeed
+	AA = L(IDENTICAL_LINK, A, A);
+	TS_ASSERT(AA != nullptr);
+	AAA = L(IDENTICAL_LINK, A, A, A);
+	TS_ASSERT(AAA != nullptr);
+
+	// Test bevaluate() on naked links with non-identical atoms
+	Handle AB = createLink(IDENTICAL_LINK, A, B);
+	Handle ABB = createLink(IDENTICAL_LINK, A, B, B);
+
+	result = AB->bevaluate(&_as);
+	TS_ASSERT(not result);
+
+	result = ABB->bevaluate(&_as);
+	TS_ASSERT(not result);
+
+	// Adding non-identical atoms to AtomSpace should throw
+	bool caught = false;
+	try { L(IDENTICAL_LINK, A, B); }
+	catch (const RuntimeException& ex) { caught = true; }
+	TS_ASSERT(caught);
+
+	TS_ASSERT_THROWS_ANYTHING(L(IDENTICAL_LINK, A, B, B));
+
+	logger().info("END TEST: %s", __FUNCTION__);
+}
+
+// Test if (IdenticalLink (Variable "$X") (Variable "$Y")) is possible
+// to form.
+void IdenticalLinkUTest::test_identical_variable()
+{
+	logger().info("BEGIN TEST: %s", __FUNCTION__);
+
+	Handle X = N(VARIABLE_NODE, "$X"),
+		Y = N(VARIABLE_NODE, "$Y");
+
+	// Make sure creating (Identical X Y) does NOT throw an error
+	TS_ASSERT_THROWS_NOTHING(L(IDENTICAL_LINK, X, Y));
+
+	logger().info("END TEST: %s", __FUNCTION__);
+}

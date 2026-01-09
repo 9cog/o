@@ -1,0 +1,82 @@
+/*
+ * tests/atoms/ExclusiveLinkUTest.cxxtest
+ *
+ * Copyright (C) 2020 Linas Vepstas
+ * All Rights Reserved
+ *
+ * Author: Linas Vepstas
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License v3 as
+ * published by the Free Software Foundation and including the exceptions
+ * at http://opencog.org/wiki/Licenses
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program; if not, write to:
+ * Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
+
+#include <opencog/atomspace/AtomSpace.h>
+
+using namespace opencog;
+
+class ExclusiveLinkUTest :  public CxxTest::TestSuite
+{
+private:
+	AtomSpace _as;
+
+public:
+	ExclusiveLinkUTest()
+	{
+		logger().set_print_to_stdout_flag(true);
+		logger().set_timestamp_flag(false);
+		logger().set_sync_flag(true);
+	}
+
+	void setUp() {}
+
+	void tearDown() {}
+
+	void test_exclusive();
+};
+
+#define N _as.add_node
+#define L _as.add_link
+
+// Basic test
+void ExclusiveLinkUTest::test_exclusive()
+{
+	logger().info("BEGIN TEST: %s", __FUNCTION__);
+
+	Handle A = N(CONCEPT_NODE, "A");
+	Handle B = N(CONCEPT_NODE, "B");
+	Handle C = N(CONCEPT_NODE, "C");
+	Handle D = N(CONCEPT_NODE, "D");
+
+	// bevaluate() on an naked link with all distinct atoms
+	Handle S = createLink(EXCLUSIVE_LINK, A, B, C, D);
+	bool result = S->bevaluate(&_as);
+	printf("Got result=%s\n", result ? "true" : "false");
+	TS_ASSERT(result);
+
+	// bevaluate() on naked link with duplicates should return false
+	Handle E = createLink(EXCLUSIVE_LINK, A, B, C, A);
+	result = E->bevaluate(&_as);
+	printf("Got duplicate result=%s\n", result ? "true" : "false");
+	TS_ASSERT(not result);
+
+	// Adding to AtomSpace should succeed for distinct atoms
+	S = L(EXCLUSIVE_LINK, A, B, C, D);
+	TS_ASSERT(S != nullptr);
+
+	// Cannot add illegal ExclusiveLink.
+	TS_ASSERT_THROWS_ANYTHING(L(EXCLUSIVE_LINK, A, B, C, A));
+
+	logger().info("END TEST: %s", __FUNCTION__);
+}

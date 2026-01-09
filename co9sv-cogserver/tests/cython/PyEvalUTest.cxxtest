@@ -1,0 +1,232 @@
+/*
+ * tests/cython/PyEvalUTest.cxxtest
+ *
+ * Copyright (C) 2016 OpenCog Foundation
+ * All Rights Reserved
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License v3 as
+ * published by the Free Software Foundation and including the exceptions
+ * at http://opencog.org/wiki/Licenses
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program; if not, see http://www.gnu.org/licenses/
+ */
+
+#include <thread>
+#include <unistd.h>
+
+#include <opencog/atomspace/AtomSpace.h>
+#include <opencog/atoms/atom_types/atom_names.h>
+#include <opencog/atoms/value/FloatValue.h>
+#include <opencog/atoms/value/VoidValue.h>
+#include <opencog/cogserver/atoms/CogServerNode.h>
+
+using namespace opencog;
+
+std::string py_cmd_exec(const char* cmd)
+{
+    char buf[4000];
+    std::string result;
+    std::shared_ptr<FILE> pope(popen(cmd, "r"), pclose);
+    if (!pope) throw std::runtime_error("popen() failed!");
+    while (!feof(pope.get())) {
+        if (fgets(buf, sizeof(buf), pope.get()) != NULL)
+            result += buf;
+    }
+    return result;
+}
+
+class PyEvalUTest : public CxxTest::TestSuite
+{
+private:
+    AtomSpacePtr asp;
+    CogServerNodePtr csrv;
+    int port = 17336;
+
+public:
+    PyEvalUTest()
+    {
+        logger().set_level(Logger::INFO);
+        logger().set_print_to_stdout_flag(true);
+
+        asp = createAtomSpace();
+        Handle hcsn = asp->add_node(COG_SERVER_NODE, "test-cogserver");
+        csrv = CogServerNodeCast(hcsn);
+
+        // Set ports and start the server
+        csrv->setValue(asp->add_atom(Predicate("*-telnet-port-*")),
+                       createFloatValue((double)port));
+        csrv->setValue(asp->add_atom(Predicate("*-web-port-*")),
+                       createFloatValue(0.0));
+        csrv->setValue(asp->add_atom(Predicate("*-mcp-port-*")),
+                       createFloatValue(0.0));
+        csrv->setValue(asp->add_atom(Predicate("*-start-*")),
+                       createVoidValue());
+    }
+
+    ~PyEvalUTest()
+    {
+        csrv->setValue(asp->add_atom(Predicate("*-stop-*")),
+                       createVoidValue());
+        csrv = nullptr;
+        asp = nullptr;
+
+        if (!CxxTest::TestTracker::tracker().suiteFailed())
+            std::remove(logger().get_filename().c_str());
+    }
+
+    void setUp()
+    {
+    }
+
+    void tearDown()
+    {
+    }
+
+    void testPythonShellBasic()
+    {
+        logger().debug("BEGIN TEST: %s", __FUNCTION__);
+
+        // Test basic Python shell interaction
+        int rc = system("printf 'py\\n.\\n' | nc -q 1 localhost 17336");
+        TS_ASSERT_EQUALS(rc, 0);
+
+        logger().debug("END TEST: %s", __FUNCTION__);
+    }
+
+    void testPythonShellVariable()
+    {
+        logger().debug("BEGIN TEST: %s", __FUNCTION__);
+
+        // Set a variable and verify it
+        std::string result = py_cmd_exec(
+            "printf 'py\\n"
+            "test_var = 42\\n"
+            "print(test_var)\\n"
+            ".\\n' | nc -q 3 localhost 17336");
+
+        TS_ASSERT(result.find("42") != std::string::npos);
+
+        logger().debug("END TEST: %s", __FUNCTION__);
+    }
+
+    void testPythonShellCalculation()
+    {
+        logger().debug("BEGIN TEST: %s", __FUNCTION__);
+
+        // Test calculation
+        std::string result = py_cmd_exec(
+            "printf 'py\\n"
+            "print(10 + 20)\\n"
+            ".\\n' | nc -q 2 localhost 17336");
+
+        TS_ASSERT(result.find("30") != std::string::npos);
+
+        logger().debug("END TEST: %s", __FUNCTION__);
+    }
+
+    void testPythonShellFunction()
+    {
+        logger().debug("BEGIN TEST: %s", __FUNCTION__);
+
+        // Test lambda function (single-line, avoids multi-line indentation issues)
+        // "square = lambda n: n * n\\n"
+        std::string result = py_cmd_exec(
+            "printf 'py\\n"
+            "def square(n):\\n"
+            "    return n * n\\n"
+            "\\n"
+            "print(square(7))\\n.\\n' | nc -q 2 localhost 17336");
+
+        fflush(stdout);
+        fflush(stderr);
+        printf("Result = >>%s<<\n", result.c_str());
+        fflush(stdout);
+        TS_ASSERT(result.find("49") != std::string::npos);
+
+        logger().debug("END TEST: %s", __FUNCTION__);
+    }
+
+    void testPythonShellImport()
+    {
+        logger().debug("BEGIN TEST: %s", __FUNCTION__);
+
+        // Test module import
+        std::string result = py_cmd_exec(
+            "printf 'py\\n"
+            "import math\\n"
+            "print(int(math.pi * 100))\\n"
+            ".\\n' | nc -q 2 localhost 17336");
+
+        printf("Result = >>%s<<\n", result.c_str());
+
+        // pi * 100 = 314.159... -> 314
+        TS_ASSERT(result.find("314") != std::string::npos);
+
+        logger().debug("END TEST: %s", __FUNCTION__);
+    }
+
+    void testPythonShellAtomSpace()
+    {
+        logger().debug("BEGIN TEST: %s", __FUNCTION__);
+
+        // Test AtomSpace access from Python
+        std::string result = py_cmd_exec(
+            "printf 'py\\n"
+            "from opencog.atomspace import AtomSpace, types\\n"
+            "a = AtomSpace()\\n"
+            "node = a.add_node(types.ConceptNode, \"test-py-node\")\\n"
+            "print(node.name)\\n.\\n' | nc -q 2 localhost 17336");
+
+        TS_ASSERT(result.find("test-py-node") != std::string::npos);
+
+        logger().debug("END TEST: %s", __FUNCTION__);
+    }
+
+    void testPythonShellErrorRecovery()
+    {
+        logger().debug("BEGIN TEST: %s", __FUNCTION__);
+
+        // First cause an error, then verify Python still works
+        int rc = system(
+            "printf 'py\\n"
+            "this is not valid python\\n"
+            ".\\n' | nc -q 2 localhost 17336");
+
+        TS_ASSERT_EQUALS(rc, 0);
+        usleep(50000);
+
+        // Now verify Python still works
+        std::string result = py_cmd_exec(
+            "printf 'py\\n"
+            "print(\"recovered\")\\n"
+            ".\\n' | nc -q 2 localhost 17336");
+
+        TS_ASSERT(result.find("recovered") != std::string::npos);
+
+        logger().debug("END TEST: %s", __FUNCTION__);
+    }
+
+    void testPythonShellMultipleCommands()
+    {
+        logger().debug("BEGIN TEST: %s", __FUNCTION__);
+
+        // Test multiple commands in sequence
+        std::string result = py_cmd_exec(
+            "printf 'py\\n"
+            "a = 10\\n"
+            "b = 20\\n"
+            "c = a + b\\n"
+            "print(c)\\n.\\n' | nc -q 2 localhost 17336");
+
+        TS_ASSERT(result.find("30") != std::string::npos);
+
+        logger().debug("END TEST: %s", __FUNCTION__);
+    }
+};

@@ -1,0 +1,8 @@
+
+IF (HAVE_GUILE)
+	ADD_CXXTEST(JoinLinkUTest)
+	ADD_CXXTEST(BlueJoinUTest)
+	ADD_CXXTEST(TrueJoinUTest)
+	ADD_CXXTEST(CompoundJoinUTest)
+	ADD_CXXTEST(GPNJoinUTest)
+ENDIF (HAVE_GUILE)

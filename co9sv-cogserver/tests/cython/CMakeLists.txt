@@ -1,0 +1,35 @@
+INCLUDE_DIRECTORIES(
+	${Python3_INCLUDE_DIRS}
+)
+
+ADD_CXXTEST(PyEvalUTest)
+
+TARGET_LINK_LIBRARIES(PyEvalUTest
+	py-shell
+	servernode
+	cogserver-types
+	${COGSERVER_LIBRARIES}
+	${ATOMSPACE_LIBRARIES}
+	${COGUTIL_LIBRARY}
+)
+
+# Set COGSERVER_MODULE_PATH so modules can be found in the build directory
+SET(COGSERVER_TEST_MODULE_PATH
+	"COGSERVER_MODULE_PATH=${PROJECT_BINARY_DIR}/opencog/cogserver/atoms:${PROJECT_BINARY_DIR}/opencog/cogserver/modules:${PROJECT_BINARY_DIR}/opencog/cogserver/shell")
+SET_PROPERTY(TEST PyEvalUTest APPEND PROPERTY ENVIRONMENT ${COGSERVER_TEST_MODULE_PATH})
+
+# --------------------------
+
+ADD_TEST(NAME CogServerPythonTest
+	COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test_cogserver.py
+	WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+
+SET_PROPERTY(TEST CogServerPythonTest
+	PROPERTY ENVIRONMENT
+	"PYTHONPATH=${PROJECT_SOURCE_DIR}/opencog/cogserver/python:${PYTHON_ROOT}:$ENV{PYTHONPATH}"
+	"LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/opencog/cogserver/server:$ENV{LD_LIBRARY_PATH}"
+	${COGSERVER_TEST_MODULE_PATH}
+)
+
+# --------------------------

@@ -1,0 +1,5 @@
+
+IF(HAVE_GUILE)
+	ADD_CXXTEST(ParallelUTest)
+	ADD_CXXTEST(ThreadedUTest)
+ENDIF(HAVE_GUILE)

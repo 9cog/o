@@ -1,0 +1,48 @@
+;
+; glob-pivot.scm
+;
+; Unit test for bug #2167
+;
+(use-modules (opencog))
+
+(EvaluationLink
+	(PredicateNode "pred-1")
+	(ListLink
+		(ConceptNode "blah")
+	)
+)
+(EvaluationLink
+	(PredicateNode "pred-2")
+	(ListLink
+		(ConceptNode "blah")
+	)
+)
+
+(define glob-pivot
+	(MeetLink
+		(TypedVariableLink
+			(GlobNode "$G")
+			(TypeIntersectionLink
+				(TypeNode "ConceptNode")
+				(IntervalLink
+					(NumberNode 1)
+					(NumberNode -1)
+				)
+			)
+		)
+		(AndLink
+			(EvaluationLink
+				(PredicateNode "pred-1")
+				(ListLink
+					(GlobNode "$G")
+				)
+			)
+			(EvaluationLink
+				(PredicateNode "pred-2")
+				(ListLink
+					(GlobNode "$G")
+				)
+			)
+		)
+	)
+)

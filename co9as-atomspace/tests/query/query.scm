@@ -1,0 +1,28 @@
+;
+; query.scm -- QueryLink usage example.
+;
+
+(use-modules (opencog))
+
+; -------------
+; Create three bits of "knowledge".
+(Evaluation
+	(Predicate "foobar") (List (Concept "funny") (Concept "thing")))
+(Evaluation
+	(Predicate "foobar") (List (Concept "funny") (Concept "story")))
+(Evaluation
+	(Predicate "foobar") (List (Concept "funny") (Concept "joke")))
+
+; -------------
+; Define a simple query. It looks for the funny stuff, and attaches
+; the result to an AnchorNode
+(define query
+	(Query
+		(TypedVariable (Variable "$x") (Type 'ConceptNode))
+		(Evaluation
+			(Predicate "foobar")
+			(List (Concept "funny") (Variable "$x")))
+		(ListLink
+			(Anchor "*-query results-*")
+			(Implication (Variable "$x") (Concept "laughable")))
+	))

@@ -1,0 +1,101 @@
+namespace opencog {
+/**
+
+\page libcogutil cogutil library
+
+This library (<em>opencog/util</em>) groups various pices of support code that
+found no place elsewhere. To build it use:
+@code
+make cogutil
+@endcode
+
+This page is a high level overview of the library; to dig into the details 
+read \ref grp_cogutil "the comprehensive overview".
+
+\section sect_files Algorithms
+
+- algorithm.h hosts small templated functions like for_each(),
+accumulate2d(), etc. Set utilities are also present
+- concurrent_queue.h concurrent_queue represents a thread-safe first in-first out list
+- Counter.h has Counter class that mimics python Counter container; it
+may be ranked using ranking() (ranking.h)
+- dorepeat.h has dorepeat() macro
+- exceptions.h defines a number of exceptions inheriting StandardException:
+    - RuntimeException
+    - XMLException
+    - IOException
+    - ComboException
+    - IndexErrorException
+    - InvalidParamException
+    - InconsistenceException
+    - FatalErrorException
+    - NotFoundException
+    - NetworkException
+    - AssertionException
+- lazy_selector class allows to select integers in [0,n) but never select twice the same;
+lazy_random_selector and lazy_normal_selector are also provided
+- numeric.h contains math related code; it includes important math headers
+and adds bits manipulation, methods like next_power_of_two(), integer_log2(), log2(),
+logsum(), entropy(), smallest_divisor(), generalized_mean(), tanimoto_distance()
+and so on
+
+\section sect_libs Other components
+
+\subsection ssect_random Randomness
+<a href="http://en.wikipedia.org/wiki/Mersenne_twister">Mersenne twister</a>
+pseudo random number generator implemented in mt19937ar.h as MT19937RandGen class.
+The interface (RandGen) for random number generators that MT19937RandGen
+inherits is in RandGen.h. Other generators are found in random.h ( randset(), 
+gaussian_rand(), biased_randbool() ).
+
+\subsection ssect_config Configuration and logging
+Config class manages the variables important for various parts of the
+package. A list of key:value entries is stored, both of them being strings
+@todo link to definitive list of variables (keys)
+
+Logger class is the central way of communicating states to outside world. It has
+five  mutually exclusive levels: ERROR, WARN, INFO, DEBUG and FINE
+Notice \b LOG_FILE and \b LOG_LEVEL variables relevant to logging process
+
+\subsection ssect_generic And some other things
+- macros.h - simple macros for converting a symbol to string,
+reading files using fread, etc
+- misc.h and misc.cc have utilities like bitcount(), tokenize(),  safe_deleter
+- assertion with OC_ASSERT macro is supported by oc_assert.h; see related 
+cassert() function
+- oc_omp.h and oc_omp.cc has multithreading support: 
+setting_omp(), num_threads(), split_jobs()
+- some platform dependent code is in platform.h and .cc to smooth 
+differences between platforms
+- pool.h implements a thread-safe blocking resource allocator. 
+See pool class documentation for further detail.
+
+
+
+\if MARKER_TREE_START
+ignored by doxygen; used as markers for update-links.py;
+\endif
+
+<TABLE width="100%" border="0"><TR>
+<TD>\ref libraries "Previous"</TD>
+<TD width="100%"></TD>
+<TD>\ref libatomspace "Next"</TD>
+</TR></TABLE>
+\if MARKER_TREE_END
+ignored by doxygen; used as markers for update-links.py;
+\endif
+*/
+
+/**
+\defgroup grp_cogutil cogutil library
+
+This library (<em>opencog/util</em>) groups various pices of support code that
+found no place elsewhere. To build it use:
+@code
+make cogutil
+@endcode
+
+To read a high level overview of this library head to 
+\ref libcogutil "dedicated page".
+*/
+} //~namespace opencog

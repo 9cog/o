@@ -1,0 +1,413 @@
+/*
+ * tests/atoms/aten/ATenUTest.cxxtest
+ *
+ * Copyright (C) 2024 OpenCog Foundation
+ * All Rights Reserved
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License v3 as
+ * published by the Free Software Foundation and including the exceptions
+ * at http://opencog.org/wiki/Licenses
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program; if not, write to:
+ * Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
+
+#include <cmath>
+#include <opencog/atoms/aten/ATenValue.h>
+#include <opencog/atoms/aten/ATenSpace.h>
+#include <opencog/atoms/aten/TensorLink.h>
+#include <opencog/atoms/core/NumberNode.h>
+#include <opencog/atomspace/AtomSpace.h>
+
+using namespace opencog;
+
+class ATenUTest : public CxxTest::TestSuite
+{
+private:
+	AtomSpacePtr _as;
+
+public:
+	void setUp()
+	{
+		_as = createAtomSpace();
+	}
+
+	void tearDown()
+	{
+		_as = nullptr;
+	}
+
+	// ========================================
+	// ATenValue tests
+
+	void test_create_zeros()
+	{
+		ATenValuePtr tensor = createATenZeros({3, 4});
+
+		TS_ASSERT_EQUALS(tensor->ndim(), 2);
+		TS_ASSERT_EQUALS(tensor->numel(), 12);
+
+		auto shape = tensor->shape();
+		TS_ASSERT_EQUALS(shape.size(), 2);
+		TS_ASSERT_EQUALS(shape[0], 3);
+		TS_ASSERT_EQUALS(shape[1], 4);
+
+		auto vec = tensor->to_vector();
+		TS_ASSERT_EQUALS(vec.size(), 12);
+		for (double v : vec) {
+			TS_ASSERT_DELTA(v, 0.0, 1e-10);
+		}
+	}
+
+	void test_create_ones()
+	{
+		ATenValuePtr tensor = createATenOnes({2, 3});
+
+		TS_ASSERT_EQUALS(tensor->numel(), 6);
+
+		auto vec = tensor->to_vector();
+		for (double v : vec) {
+			TS_ASSERT_DELTA(v, 1.0, 1e-10);
+		}
+	}
+
+	void test_create_from_vector()
+	{
+		std::vector<double> data = {1.0, 2.0, 3.0, 4.0, 5.0, 6.0};
+		ATenValuePtr tensor = createATenFromVector(data, {2, 3});
+
+		TS_ASSERT_EQUALS(tensor->shape()[0], 2);
+		TS_ASSERT_EQUALS(tensor->shape()[1], 3);
+
+		auto vec = tensor->to_vector();
+		for (size_t i = 0; i < data.size(); i++) {
+			TS_ASSERT_DELTA(vec[i], data[i], 1e-10);
+		}
+	}
+
+	void test_tensor_add()
+	{
+		ATenValuePtr a = createATenFromVector({1.0, 2.0, 3.0}, {3});
+		ATenValuePtr b = createATenFromVector({4.0, 5.0, 6.0}, {3});
+
+		ValuePtr result = a->add(*b);
+		ATenValuePtr c = ATenValueCast(result);
+
+		auto vec = c->to_vector();
+		TS_ASSERT_DELTA(vec[0], 5.0, 1e-10);
+		TS_ASSERT_DELTA(vec[1], 7.0, 1e-10);
+		TS_ASSERT_DELTA(vec[2], 9.0, 1e-10);
+	}
+
+	void test_tensor_sub()
+	{
+		ATenValuePtr a = createATenFromVector({5.0, 7.0, 9.0}, {3});
+		ATenValuePtr b = createATenFromVector({1.0, 2.0, 3.0}, {3});
+
+		ValuePtr result = a->sub(*b);
+		ATenValuePtr c = ATenValueCast(result);
+
+		auto vec = c->to_vector();
+		TS_ASSERT_DELTA(vec[0], 4.0, 1e-10);
+		TS_ASSERT_DELTA(vec[1], 5.0, 1e-10);
+		TS_ASSERT_DELTA(vec[2], 6.0, 1e-10);
+	}
+
+	void test_tensor_mul()
+	{
+		ATenValuePtr a = createATenFromVector({2.0, 3.0, 4.0}, {3});
+		ATenValuePtr b = createATenFromVector({3.0, 4.0, 5.0}, {3});
+
+		ValuePtr result = a->mul(*b);
+		ATenValuePtr c = ATenValueCast(result);
+
+		auto vec = c->to_vector();
+		TS_ASSERT_DELTA(vec[0], 6.0, 1e-10);
+		TS_ASSERT_DELTA(vec[1], 12.0, 1e-10);
+		TS_ASSERT_DELTA(vec[2], 20.0, 1e-10);
+	}
+
+	void test_tensor_matmul()
+	{
+		// 2x3 @ 3x2 = 2x2
+		ATenValuePtr a = createATenFromVector({1.0, 2.0, 3.0, 4.0, 5.0, 6.0}, {2, 3});
+		ATenValuePtr b = createATenFromVector({1.0, 2.0, 3.0, 4.0, 5.0, 6.0}, {3, 2});
+
+		ValuePtr result = a->matmul(*b);
+		ATenValuePtr c = ATenValueCast(result);
+
+		auto shape = c->shape();
+		TS_ASSERT_EQUALS(shape[0], 2);
+		TS_ASSERT_EQUALS(shape[1], 2);
+
+		auto vec = c->to_vector();
+		// [1,2,3] @ [[1,2],[3,4],[5,6]] = [1*1+2*3+3*5, 1*2+2*4+3*6] = [22, 28]
+		// [4,5,6] @ [[1,2],[3,4],[5,6]] = [4*1+5*3+6*5, 4*2+5*4+6*6] = [49, 64]
+		TS_ASSERT_DELTA(vec[0], 22.0, 1e-10);
+		TS_ASSERT_DELTA(vec[1], 28.0, 1e-10);
+		TS_ASSERT_DELTA(vec[2], 49.0, 1e-10);
+		TS_ASSERT_DELTA(vec[3], 64.0, 1e-10);
+	}
+
+	void test_tensor_transpose()
+	{
+		ATenValuePtr a = createATenFromVector({1.0, 2.0, 3.0, 4.0, 5.0, 6.0}, {2, 3});
+
+		ValuePtr result = a->transpose(0, 1);
+		ATenValuePtr b = ATenValueCast(result);
+
+		auto shape = b->shape();
+		TS_ASSERT_EQUALS(shape[0], 3);
+		TS_ASSERT_EQUALS(shape[1], 2);
+
+		auto vec = b->to_vector();
+		// Original: [[1,2,3],[4,5,6]]
+		// Transposed: [[1,4],[2,5],[3,6]]
+		TS_ASSERT_DELTA(vec[0], 1.0, 1e-10);
+		TS_ASSERT_DELTA(vec[1], 4.0, 1e-10);
+		TS_ASSERT_DELTA(vec[2], 2.0, 1e-10);
+		TS_ASSERT_DELTA(vec[3], 5.0, 1e-10);
+	}
+
+	void test_tensor_reshape()
+	{
+		ATenValuePtr a = createATenFromVector({1.0, 2.0, 3.0, 4.0, 5.0, 6.0}, {2, 3});
+
+		ValuePtr result = a->reshape({3, 2});
+		ATenValuePtr b = ATenValueCast(result);
+
+		auto shape = b->shape();
+		TS_ASSERT_EQUALS(shape[0], 3);
+		TS_ASSERT_EQUALS(shape[1], 2);
+		TS_ASSERT_EQUALS(b->numel(), 6);
+	}
+
+	void test_tensor_sum()
+	{
+		ATenValuePtr a = createATenFromVector({1.0, 2.0, 3.0, 4.0}, {4});
+
+		ValuePtr result = a->sum();
+		ATenValuePtr b = ATenValueCast(result);
+
+		TS_ASSERT_DELTA(b->item(), 10.0, 1e-10);
+	}
+
+	void test_tensor_mean()
+	{
+		ATenValuePtr a = createATenFromVector({2.0, 4.0, 6.0, 8.0}, {4});
+
+		ValuePtr result = a->mean();
+		ATenValuePtr b = ATenValueCast(result);
+
+		TS_ASSERT_DELTA(b->item(), 5.0, 1e-10);
+	}
+
+	void test_tensor_relu()
+	{
+		ATenValuePtr a = createATenFromVector({-2.0, -1.0, 0.0, 1.0, 2.0}, {5});
+
+		ValuePtr result = a->relu();
+		ATenValuePtr b = ATenValueCast(result);
+
+		auto vec = b->to_vector();
+		TS_ASSERT_DELTA(vec[0], 0.0, 1e-10);
+		TS_ASSERT_DELTA(vec[1], 0.0, 1e-10);
+		TS_ASSERT_DELTA(vec[2], 0.0, 1e-10);
+		TS_ASSERT_DELTA(vec[3], 1.0, 1e-10);
+		TS_ASSERT_DELTA(vec[4], 2.0, 1e-10);
+	}
+
+	void test_tensor_sigmoid()
+	{
+		ATenValuePtr a = createATenFromVector({0.0}, {1});
+
+		ValuePtr result = a->sigmoid();
+		ATenValuePtr b = ATenValueCast(result);
+
+		TS_ASSERT_DELTA(b->item(), 0.5, 1e-10);
+	}
+
+	void test_tensor_equality()
+	{
+		ATenValuePtr a = createATenFromVector({1.0, 2.0, 3.0}, {3});
+		ATenValuePtr b = createATenFromVector({1.0, 2.0, 3.0}, {3});
+		ATenValuePtr c = createATenFromVector({1.0, 2.0, 4.0}, {3});
+
+		TS_ASSERT(*a == *b);
+		TS_ASSERT(!(*a == *c));
+	}
+
+	void test_tensor_to_string()
+	{
+		ATenValuePtr a = createATenFromVector({1.0, 2.0, 3.0}, {3});
+
+		std::string str = a->to_string();
+		TS_ASSERT(str.find("ATenValue") != std::string::npos);
+		TS_ASSERT(str.find("shape=") != std::string::npos);
+	}
+
+	// ========================================
+	// ATenSpace tests
+
+	void test_aten_space_register()
+	{
+		ATenSpace space(_as.get());
+
+		ATenValuePtr tensor = createATenFromVector({1.0, 2.0, 3.0}, {3});
+		space.register_tensor("my_tensor", tensor);
+
+		TS_ASSERT(space.has_tensor("my_tensor"));
+		TS_ASSERT_EQUALS(space.tensor_count(), 1);
+
+		ATenValuePtr retrieved = space.get_tensor("my_tensor");
+		TS_ASSERT(retrieved != nullptr);
+		TS_ASSERT(*tensor == *retrieved);
+	}
+
+	void test_aten_space_create()
+	{
+		ATenSpace space(_as.get());
+
+		ATenValuePtr zeros = space.zeros({2, 3}, "zeros");
+		ATenValuePtr ones = space.ones({2, 3}, "ones");
+
+		TS_ASSERT(space.has_tensor("zeros"));
+		TS_ASSERT(space.has_tensor("ones"));
+
+		auto zvec = zeros->to_vector();
+		auto ovec = ones->to_vector();
+
+		for (double v : zvec) TS_ASSERT_DELTA(v, 0.0, 1e-10);
+		for (double v : ovec) TS_ASSERT_DELTA(v, 1.0, 1e-10);
+	}
+
+	void test_aten_space_attach()
+	{
+		ATenSpace space(_as.get());
+
+		Handle atom = _as->add_node(CONCEPT_NODE, "test");
+		ATenValuePtr tensor = createATenFromVector({1.0, 2.0, 3.0}, {3});
+
+		space.attach_tensor(atom, tensor);
+
+		TS_ASSERT(space.has_attached_tensor(atom));
+
+		ATenValuePtr retrieved = space.get_attached_tensor(atom);
+		TS_ASSERT(retrieved != nullptr);
+		TS_ASSERT(*tensor == *retrieved);
+	}
+
+	void test_aten_space_clear()
+	{
+		ATenSpace space(_as.get());
+
+		space.zeros({2, 3}, "t1");
+		space.ones({2, 3}, "t2");
+
+		TS_ASSERT_EQUALS(space.tensor_count(), 2);
+
+		space.clear();
+
+		TS_ASSERT_EQUALS(space.tensor_count(), 0);
+		TS_ASSERT(!space.has_tensor("t1"));
+		TS_ASSERT(!space.has_tensor("t2"));
+	}
+
+	// ========================================
+	// TensorLink tests
+
+	void test_tensor_add_link()
+	{
+		Handle n1 = _as->add_node(NUMBER_NODE, "1 2 3");
+		Handle n2 = _as->add_node(NUMBER_NODE, "4 5 6");
+
+		Handle add_link = _as->add_link(TENSOR_ADD_LINK, n1, n2);
+
+		ValuePtr result = add_link->execute(_as.get());
+		ATenValuePtr tensor = ATenValueCast(result);
+
+		TS_ASSERT(tensor != nullptr);
+		auto vec = tensor->to_vector();
+		TS_ASSERT_DELTA(vec[0], 5.0, 1e-10);
+		TS_ASSERT_DELTA(vec[1], 7.0, 1e-10);
+		TS_ASSERT_DELTA(vec[2], 9.0, 1e-10);
+	}
+
+	void test_tensor_mul_link()
+	{
+		Handle n1 = _as->add_node(NUMBER_NODE, "2 3 4");
+		Handle n2 = _as->add_node(NUMBER_NODE, "5 6 7");
+
+		Handle mul_link = _as->add_link(TENSOR_MUL_LINK, n1, n2);
+
+		ValuePtr result = mul_link->execute(_as.get());
+		ATenValuePtr tensor = ATenValueCast(result);
+
+		TS_ASSERT(tensor != nullptr);
+		auto vec = tensor->to_vector();
+		TS_ASSERT_DELTA(vec[0], 10.0, 1e-10);
+		TS_ASSERT_DELTA(vec[1], 18.0, 1e-10);
+		TS_ASSERT_DELTA(vec[2], 28.0, 1e-10);
+	}
+
+	void test_tensor_sum_link()
+	{
+		Handle n1 = _as->add_node(NUMBER_NODE, "1 2 3 4");
+
+		Handle sum_link = _as->add_link(TENSOR_SUM_LINK, n1);
+
+		ValuePtr result = sum_link->execute(_as.get());
+		ATenValuePtr tensor = ATenValueCast(result);
+
+		TS_ASSERT(tensor != nullptr);
+		TS_ASSERT_DELTA(tensor->item(), 10.0, 1e-10);
+	}
+
+	void test_tensor_relu_link()
+	{
+		Handle n1 = _as->add_node(NUMBER_NODE, "-2 -1 0 1 2");
+
+		Handle relu_link = _as->add_link(TENSOR_RELU_LINK, n1);
+
+		ValuePtr result = relu_link->execute(_as.get());
+		ATenValuePtr tensor = ATenValueCast(result);
+
+		TS_ASSERT(tensor != nullptr);
+		auto vec = tensor->to_vector();
+		TS_ASSERT_DELTA(vec[0], 0.0, 1e-10);
+		TS_ASSERT_DELTA(vec[1], 0.0, 1e-10);
+		TS_ASSERT_DELTA(vec[2], 0.0, 1e-10);
+		TS_ASSERT_DELTA(vec[3], 1.0, 1e-10);
+		TS_ASSERT_DELTA(vec[4], 2.0, 1e-10);
+	}
+
+	void test_set_and_get_tensor_link()
+	{
+		Handle atom = _as->add_node(CONCEPT_NODE, "tensor_holder");
+		Handle n1 = _as->add_node(NUMBER_NODE, "1 2 3");
+
+		// Set tensor on atom
+		Handle set_link = _as->add_link(SET_TENSOR_LINK, atom, n1);
+		set_link->execute(_as.get());
+
+		// Get tensor from atom
+		Handle get_link = _as->add_link(TENSOR_OF_LINK, atom);
+		ValuePtr result = get_link->execute(_as.get());
+		ATenValuePtr tensor = ATenValueCast(result);
+
+		TS_ASSERT(tensor != nullptr);
+		auto vec = tensor->to_vector();
+		TS_ASSERT_EQUALS(vec.size(), 3);
+		TS_ASSERT_DELTA(vec[0], 1.0, 1e-10);
+		TS_ASSERT_DELTA(vec[1], 2.0, 1e-10);
+		TS_ASSERT_DELTA(vec[2], 3.0, 1e-10);
+	}
+};

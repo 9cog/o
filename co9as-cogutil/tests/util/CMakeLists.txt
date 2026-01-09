@@ -1,0 +1,21 @@
+INCLUDE_DIRECTORIES(
+	${PROJECT_SOURCE_DIR}/opencog/util
+)
+
+LINK_DIRECTORIES(
+	${PROJECT_BINARY_DIR}
+	${PROJECT_BINARY_DIR}/opencog/util
+)
+
+LINK_LIBRARIES(
+	cogutil
+)
+
+ADD_CXXTEST(algorithmUTest)
+ADD_CXXTEST(CounterUTest)
+ADD_CXXTEST(LoggerUTest)
+ADD_CXXTEST(numericUTest)
+ADD_CXXTEST(randomUTest)
+ADD_CXXTEST(sigslotUTest)
+ADD_CXXTEST(WatermarkUTest)
+ADD_CXXTEST(zipfUTest)

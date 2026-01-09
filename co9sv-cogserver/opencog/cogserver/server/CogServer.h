@@ -1,0 +1,141 @@
+/*
+ * opencog/cogserver/server/CogServer.h
+ *
+ * Copyright (C) 2002-2007 Novamente LLC
+ * Copyright (C) 2008 by OpenCog Foundation
+ * Written by Andre Senna <senna@vettalabs.com>
+ *            Gustavo Gama <gama@vettalabs.com>
+ *
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
+
+#ifndef _OPENCOG_COGSERVER_H
+#define _OPENCOG_COGSERVER_H
+
+#include <atomic>
+
+#include <opencog/atomspace/AtomSpace.h>
+
+#include <opencog/cogserver/server/Module.h>
+
+#include <opencog/cogserver/server/ModuleManager.h>
+#include <opencog/network/NetworkServer.h>
+#include <opencog/cogserver/server/RequestManager.h>
+
+namespace opencog
+{
+/** \addtogroup grp_server
+ *  @{
+ */
+
+/**
+ * This class implements a network server. It provides shared
+ * network access to a given AtomSpace, together with some basic
+ * capabilities to load C++ extension modules.
+ *
+ * The most useful thing that the cogserver currently provides is
+ * shared multi-user network access to a command line, from which
+ * the python and scheme read-evaluate-print-loop (REPL) shells
+ * can be accessed. This allows users to perform management and
+ * development on an atomspace by attaching to it from a remote
+ * location.  In particular, the atomspace(s) are not killed when
+ * the last user disconnects; the server will stay running in this
+ * dettached state, until user reconnect, or until it is shut down.
+ *
+ * The network server is implemented by devoting one thread to listening
+ * for TCP/IP socket connections. Upon connection, a new thread is
+ * forked to handle user requests and the run the python/scheme shells.
+ * Command-line commands are implemented as "Requests", described below.
+ * The AtomSpace is thread-safe, as well as the Request queue, and the
+ * python/scheme REPL shells, so there should be no issues with
+ * multi-user access.
+ */
+class CogServer :
+    public RequestManager,
+    public ModuleManager
+{
+private:
+    SocketManager _socket_manager;
+    NetworkServer* _consoleServer;
+    NetworkServer* _webServer;
+    NetworkServer* _mcpServer;
+    std::atomic<bool> _running;
+
+protected:
+    // The following methods "could be" public (historically, they were)
+    // but are now marked protected due to widespread abuse. Control is
+    // centralized in CogServerNode, and it provides the master authority
+    // for starting and stopping things.
+
+    /// Atomically set running to true. Returns true if it was
+    /// already running (i.e. already set by someone else).
+    bool set_running(void) { return _running.exchange(true); }
+
+    /** Starts the network console server; this provides a command
+     *  line server socket on the specified port. */
+    void enableNetworkServer(const Handle&);
+
+    /** Starts the websockets server. */
+    void enableWebServer(const Handle&);
+
+    /** Starts the MCP Model Context Protocol server. */
+    void enableMCPServer(const Handle&);
+
+    /** Stops the network server and closes all the open server sockets. */
+    void disableNetworkServer(void);
+    void disableWebServer(void);
+    void disableMCPServer(void);
+
+    /** Server's main loop. Executed while the 'running' flag is set
+     *  to true. It processes the request queue.
+     */
+    void serverLoop(void);
+
+    /** Runs a single server loop step. */
+    void runLoopStep(void);
+
+public:
+    CogServer(void);
+    virtual ~CogServer(void);
+
+    /** Terminates the main loop. Waits for all in-progress work
+     * to complete, will also schedule all pending requests and
+     * run them, before returning. After returning, everything
+     * guaranteed tp be done. */
+    void stop(void);
+
+    /** Returns the CogServerNode handle. */
+    virtual Handle getHandle() { return Handle::UNDEFINED; }
+
+    void set_max_open_sockets(int);
+
+    bool running(void) const { return _running; }
+
+    /** Get the web server port */
+    short getWebServerPort() const { return _webServer ? _webServer->getPort() : 0; }
+
+    /*** Request API ***/
+    Request* createRequest(const std::string& id) {
+        return RequestManager::createRequest(id, *this);
+    }
+
+    /**** Module API ****/
+    bool loadModule(const std::string& filename, const Handle& hcsn) {
+        return ModuleManager::loadModule(filename, hcsn);
+    }
+    void loadModules(const Handle& hcsn) { ModuleManager::loadModules(hcsn); }
+
+    /** Print human-readable stats about the cogserver */
+    std::string display_stats(int nlines = -1);
+    std::string display_web_stats(void);
+    static std::string stats_legend(void);
+
+    /** Get the shared socket manager */
+    SocketManager* getSocketManager() { return &_socket_manager; }
+
+}; // class
+
+/** @}*/
+}  // namespace
+
+#endif // _OPENCOG_COGSERVER_H

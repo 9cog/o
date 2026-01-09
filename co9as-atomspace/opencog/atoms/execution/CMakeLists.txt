@@ -1,0 +1,33 @@
+
+# The atom_types.h file is written to the build directory
+INCLUDE_DIRECTORIES( ${CMAKE_CURRENT_BINARY_DIR})
+
+ADD_LIBRARY (execution
+	EvaluatableLink.cc
+	EvaluationLink.cc
+	ExecutionOutputLink.cc
+)
+
+# Without this, parallel make will race and crap up the generated files.
+ADD_DEPENDENCIES(execution opencog_atom_types)
+
+TARGET_LINK_LIBRARIES(execution
+	scope
+	parallel
+	clearbox
+	atomflow
+	atomcore
+	atombase
+)
+
+INSTALL (TARGETS execution
+	EXPORT AtomSpaceTargets
+	DESTINATION "${CMAKE_INSTALL_LIBDIR}/opencog")
+
+INSTALL (FILES
+	EvaluatableLink.h
+	EvaluationLink.h
+	ExecutionOutputLink.h
+	GroundedProcedureNode.h
+	DESTINATION "include/opencog/atoms/execution"
+)

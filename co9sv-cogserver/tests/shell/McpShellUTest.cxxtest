@@ -1,0 +1,199 @@
+/*
+ * tests/shell/McpShellUTest.cxxtest
+ *
+ * Test for MCP Shell functionality
+ * Copyright (c) 2025 BrainyBlaze Dynamics Inc.
+ * All Rights Reserved
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License v3 as
+ * published by the Free Software Foundation and including the exceptions
+ * at http://opencog.org/wiki/Licenses
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program; if not, see http://www.gnu.org/licenses/
+ */
+
+#include <thread>
+#include <unistd.h>
+
+#include <opencog/atomspace/AtomSpace.h>
+#include <opencog/atoms/atom_types/atom_names.h>
+#include <opencog/atoms/value/FloatValue.h>
+#include <opencog/atoms/value/VoidValue.h>
+#include <opencog/cogserver/atoms/CogServerNode.h>
+
+using namespace opencog;
+
+std::string mcp_cmd_exec(const char* cmd)
+{
+    char buf[1000];
+    std::string result;
+    std::shared_ptr<FILE> pope(popen(cmd, "r"), pclose);
+    if (!pope) throw std::runtime_error("popen() failed!");
+    while (!feof(pope.get())) {
+        if (fgets(buf, sizeof(buf), pope.get()) != NULL)
+            result += buf;
+    }
+    return result;
+}
+
+class McpShellUTest : public CxxTest::TestSuite
+{
+private:
+    AtomSpacePtr asp;
+    CogServerNodePtr csrv;
+
+public:
+    McpShellUTest()
+    {
+        // logger().set_level(Logger::DEBUG);
+        logger().set_level(Logger::INFO);
+
+        asp = createAtomSpace();
+        Handle hcsn = asp->add_node(COG_SERVER_NODE, "test-cogserver");
+        csrv = CogServerNodeCast(hcsn);
+
+        // Set ports and start the server
+        csrv->setValue(asp->add_atom(Predicate("*-telnet-port-*")),
+                       createFloatValue(17334.0));
+        csrv->setValue(asp->add_atom(Predicate("*-web-port-*")),
+                       createFloatValue(0.0));
+        csrv->setValue(asp->add_atom(Predicate("*-mcp-port-*")),
+                       createFloatValue(0.0));
+        csrv->setValue(asp->add_atom(Predicate("*-start-*")),
+                       createVoidValue());
+    }
+
+    ~McpShellUTest()
+    {
+        csrv->setValue(asp->add_atom(Predicate("*-stop-*")),
+                       createVoidValue());
+        csrv = nullptr;
+        asp = nullptr;
+
+        if (!CxxTest::TestTracker::tracker().suiteFailed())
+            std::remove(logger().get_filename().c_str());
+    }
+
+    void setUp()
+    {
+    }
+
+    void tearDown()
+    {
+    }
+
+    void testMcpShellBasic()
+    {
+        logger().debug("BEGIN TEST: %s", __FUNCTION__);
+
+        // Test basic MCP shell connection
+        int rc = system("printf 'mcp\\n.\\n' | nc -q 1 localhost 17334");
+        TS_ASSERT_EQUALS(rc, 0);
+
+        logger().debug("END TEST: %s", __FUNCTION__);
+    }
+
+    void testMcpShellServer()
+    {
+        logger().debug("BEGIN TEST: %s", __FUNCTION__);
+
+        // Test MCP shell in server mode
+        std::string reply = mcp_cmd_exec(
+            "printf 'mcp server localhost 8081\\n.\\n' | nc -q 1 localhost 17334");
+
+        TS_ASSERT(reply.size() > 0);
+        TS_ASSERT(reply.find("MCP shell") != std::string::npos);
+
+        logger().debug("END TEST: %s", __FUNCTION__);
+    }
+
+    void testMcpShellClient()
+    {
+        logger().debug("BEGIN TEST: %s", __FUNCTION__);
+
+        // Test MCP shell in client mode
+        std::string reply = mcp_cmd_exec(
+            "printf 'mcp client\\n.\\n' | nc -q 1 localhost 17334");
+
+        TS_ASSERT(reply.size() > 0);
+        TS_ASSERT(reply.find("MCP shell") != std::string::npos);
+
+        logger().debug("END TEST: %s", __FUNCTION__);
+    }
+
+    void testMcpShellHush()
+    {
+        logger().debug("BEGIN TEST: %s", __FUNCTION__);
+
+        // Test MCP shell with hush mode
+        std::string reply = mcp_cmd_exec(
+            "printf 'mcp hush\\n' | nc -q 1 localhost 17334");
+
+        // Hush mode should return minimal output
+        TS_ASSERT(reply.size() < 100);
+
+        logger().debug("END TEST: %s", __FUNCTION__);
+    }
+
+    void testMcpShellPingTest()
+    {
+        logger().debug("BEGIN TEST: %s", __FUNCTION__);
+
+        // Test MCP ping via the shell using netcat
+        std::string result = mcp_cmd_exec(
+            "printf 'mcp\\n{\"jsonrpc\":\"2.0\",\"method\":\"ping\",\"id\":1}\\n' | nc -q 1 localhost 17334");
+
+        TS_ASSERT(result.size() > 0);
+        // Verify it's a valid JSON-RPC response
+        TS_ASSERT(result.find("\"jsonrpc\"") != std::string::npos);
+        TS_ASSERT(result.find("\"2.0\"") != std::string::npos);
+
+        logger().debug("END TEST: %s", __FUNCTION__);
+    }
+
+    void testMcpShellToolsList()
+    {
+        logger().debug("BEGIN TEST: %s", __FUNCTION__);
+
+        // Test tools/list via the MCP shell using netcat
+        std::string reply_str = mcp_cmd_exec(
+            "printf 'mcp\\n{\"jsonrpc\":\"2.0\",\"method\":\"tools/list\",\"id\":1}\\n' | nc -q 1 localhost 17334");
+
+        // Verify the reply contains a valid JSON-RPC response
+        TS_ASSERT(reply_str.find("{") != std::string::npos);
+        TS_ASSERT(reply_str.find("}") != std::string::npos);
+        TS_ASSERT(reply_str.find("jsonrpc") != std::string::npos);
+        TS_ASSERT(reply_str.find("2.0") != std::string::npos);
+        TS_ASSERT(reply_str.find("id") != std::string::npos);
+
+        logger().debug("END TEST: %s", __FUNCTION__);
+    }
+
+    void testMcpShellAtomSpaceIntegration()
+    {
+        logger().debug("BEGIN TEST: %s", __FUNCTION__);
+
+        // First, add an atom using the Scheme shell
+        int rc = system("printf '(Concept \"mcp-test-concept\")\\n' | nc -q 1 localhost 17334");
+        TS_ASSERT_EQUALS(rc, 0);
+        usleep(50000);
+
+        // Now use MCP shell to query for the atom
+        std::string result = mcp_cmd_exec(
+            "printf 'mcp\\n{\"jsonrpc\": \"2.0\", \"method\": \"tools/call\", "
+            "\"params\": {\"name\": \"getAtoms\", \"arguments\": {\"type\": \"ConceptNode\"}}, "
+            "\"id\": 1}\\n' | nc -q 1 localhost 17334");
+
+        TS_ASSERT(result.size() > 0);
+        TS_ASSERT(result.find("mcp-test-concept") != std::string::npos);
+
+        logger().debug("END TEST: %s", __FUNCTION__);
+    }
+};

@@ -1,0 +1,173 @@
+/*
+ * tests/shell/IPv6UTest.cxxtest
+ *
+ * Copyright (C) 2025 BrainyBlaze Dynamics, Inc.
+ * All Rights Reserved
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License v3 as
+ * published by the Free Software Foundation and including the exceptions
+ * at http://opencog.org/wiki/Licenses
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program; if not, see http://www.gnu.org/licenses/
+ */
+
+#include <thread>
+#include <unistd.h>
+
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <string.h>
+#include <errno.h>
+
+#include <opencog/atomspace/AtomSpace.h>
+#include <opencog/atoms/atom_types/atom_names.h>
+#include <opencog/atoms/value/FloatValue.h>
+#include <opencog/atoms/value/VoidValue.h>
+#include <opencog/cogserver/atoms/CogServerNode.h>
+
+using namespace opencog;
+
+class IPv6UTest :  public CxxTest::TestSuite
+{
+private:
+	AtomSpacePtr asp;
+	CogServerNodePtr csrv;
+
+public:
+
+	IPv6UTest()
+	{
+		// logger().set_level(Logger::DEBUG);
+		logger().set_level(Logger::INFO);
+		logger().set_print_to_stdout_flag(true);
+
+		asp = createAtomSpace();
+		Handle hcsn = asp->add_node(COG_SERVER_NODE, "test-cogserver");
+		csrv = CogServerNodeCast(hcsn);
+
+		// Set ports and start the server
+		csrv->setValue(asp->add_atom(Predicate("*-telnet-port-*")),
+		               createFloatValue(17444.0));
+		csrv->setValue(asp->add_atom(Predicate("*-web-port-*")),
+		               createFloatValue(0.0));
+		csrv->setValue(asp->add_atom(Predicate("*-mcp-port-*")),
+		               createFloatValue(0.0));
+		csrv->setValue(asp->add_atom(Predicate("*-start-*")),
+		               createVoidValue());
+	}
+
+	~IPv6UTest()
+	{
+		csrv->setValue(asp->add_atom(Predicate("*-stop-*")),
+		               createVoidValue());
+		csrv = nullptr;
+		asp = nullptr;
+
+		// erase the log file if no assertions failed
+		if (!CxxTest::TestTracker::tracker().suiteFailed())
+			std::remove(logger().get_filename().c_str());
+	}
+
+	void setUp()
+	{
+	}
+
+	void tearDown()
+	{
+	}
+
+	void testIPv6Connection()
+	{
+		logger().debug("BEGIN TEST: %s", __FUNCTION__);
+
+		// Open an IPv6 socket to the server.
+		int sock = socket(AF_INET6, SOCK_STREAM, 0);
+		if (sock < 0)
+		{
+			// IPv6 not supported on this system
+			if (errno == EAFNOSUPPORT || errno == EPROTONOSUPPORT)
+			{
+				printf("IPv6 not supported on this system (errno=%d). Test skipped.\n", errno);
+				logger().info("IPv6 not supported, test skipped");
+				return;
+			}
+			// Unexpected error
+			TS_ASSERT(0 < sock);
+			return;
+		}
+
+		struct sockaddr_in6 server;
+		memset(&server, 0, sizeof(server));
+		server.sin6_family = AF_INET6;
+		server.sin6_port = htons(17444);
+		// Connect to ::1 (IPv6 localhost)
+		inet_pton(AF_INET6, "::1", &server.sin6_addr);
+
+		int rc = connect(sock, (struct sockaddr *)&server, sizeof(server));
+		if (rc != 0)
+		{
+			// IPv6 not available/configured on this system
+			if (errno == ENETUNREACH || errno == EADDRNOTAVAIL ||
+			    errno == ECONNREFUSED || errno == EHOSTUNREACH)
+			{
+				printf("IPv6 not available on this system (errno=%d: %s). Test skipped.\n",
+				       errno, strerror(errno));
+				logger().info("IPv6 not available, test skipped");
+				close(sock);
+				return;
+			}
+			// Unexpected error
+			printf("Unexpected connection error: errno=%d: %s\n", errno, strerror(errno));
+			TS_ASSERT_EQUALS(0, rc);
+			close(sock);
+			return;
+		}
+
+		// Send the help command
+		const char* cmd = "help\n";
+		rc = send(sock, cmd, strlen(cmd), 0);
+		TS_ASSERT(0 < rc);
+
+		// Receive the response - may arrive in multiple packets
+		// Wait up to 2 seconds for the complete response
+		std::string response;
+		for (int i = 0; i < 20; i++)
+		{
+			char buffer[4096];
+			memset(buffer, 0, sizeof(buffer));
+			rc = recv(sock, buffer, sizeof(buffer) - 1, 0);
+			if (rc > 0) {
+				response += buffer;
+			}
+			// Wait a bit for more data
+			usleep(100000);  // 100ms
+			// If we got a substantial response, we're done
+			if (response.size() > 500) break;
+		}
+
+		// The help command should return a list of available commands
+		// We expect to see at least some common commands in the response
+		TS_ASSERT(response.npos != response.find("help"));
+		TS_ASSERT(response.npos != response.find("quit"));
+		TS_ASSERT(response.npos != response.find("scm"));
+
+		// The response should be substantial (at least 200 bytes)
+		TS_ASSERT_LESS_THAN(200, response.size());
+
+		printf("IPv6 connection successful. Received %zu bytes\n", response.size());
+
+		// Be polite and close the socket
+		close(sock);
+
+		logger().debug("END TEST: %s", __FUNCTION__);
+	}
+};

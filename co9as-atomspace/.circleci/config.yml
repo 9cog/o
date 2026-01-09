@@ -1,0 +1,625 @@
+version: 2.0
+
+jobs:
+  atomspace:
+    docker:
+      - image: $CIRCLE_PROJECT_USERNAME/opencog-deps
+        user: root
+        environment:
+          CCACHE_DIR: /ws/ccache
+    working_directory: /ws/atomspace
+    steps:
+      - attach_workspace:
+          at: /ws
+      - run:
+          name: Start restoring ccache
+          command: date +%d-%m-%Y > /tmp/date
+      - restore_cache:
+          keys:
+            - ccache-{{ checksum "/tmp/date" }}
+            - ccache-
+      - run:
+          name: Install CogUtil
+          command: |
+            git clone --depth 1 https://github.com/$CIRCLE_PROJECT_USERNAME/cogutil /ws/cogutil
+            mkdir -p /ws/cogutil/build
+            cd /ws/cogutil/build && cmake .. && make -j2 && make -j2 install
+            ldconfig
+      - checkout
+      - run:
+          name: CMake Configure
+          command: mkdir build && cd build && cmake ..
+      - run:
+          name: Build
+          command: cd build && make -j2
+      - run:
+          name: Build tests
+          command: cd build && make -j2 tests
+      - run:
+          name: Run tests
+          command: cd build && make -j2 check
+      - run:
+          name: Install AtomSpace
+          command: cd build && make -j2 install && ldconfig
+      - run:
+          name: Build examples
+          command: cd build && make -j2 examples
+      - run:
+          name: Print test log
+          command: cat build/tests/Testing/Temporary/LastTest.log
+          when: always
+      - persist_to_workspace:
+          root: /ws/
+          paths:
+            - cogutil
+            - atomspace
+            - ccache
+
+  atomspace-storage:
+    docker:
+      - image: $CIRCLE_PROJECT_USERNAME/opencog-deps
+        user: root
+        environment:
+          CCACHE_DIR: /ws/ccache
+    working_directory: /ws/atomspace-storage
+    steps:
+      - attach_workspace:
+          at: /ws/
+      - run:
+          name: Install CogUtil
+          command: cd /ws/cogutil/build && make -j2 install && ldconfig
+      - run:
+          name: Install AtomSpace
+          command: cd /ws/atomspace/build && make -j2 install && ldconfig
+      - run:
+          name: Checkout AtomSpaceStorage
+          command: git clone --depth 1 https://github.com/$CIRCLE_PROJECT_USERNAME/atomspace-storage .
+      - run:
+          name: CMake Configure
+          command: mkdir build && cd build && cmake ..
+      - run:
+          name: Build
+          command: cd build && make -j2
+      - run:
+          name: Build tests
+          command: cd build && make -j2 tests
+      - run:
+          name: Run tests
+          command: cd build && make check
+      - run:
+          name: Install AtomSpaceStorage
+          command: cd build && make -j2 install && ldconfig
+      - run:
+          name: Print test log
+          command: cat build/tests/Testing/Temporary/LastTest.log
+          when: always
+      - persist_to_workspace:
+          root: /ws/
+          paths:
+            - atomspace-storage
+            # See https://github.com/opencog/cogutil/commit/da53c4079c3972904857a365a7761ac5923e4e92
+            # - ccache
+
+### Disale for now, needs to be ported away from TruthValues.
+### It won't even compile until that is done. and I feel lazy
+### just right now.
+###
+###  atomspace-pgres:
+###    docker:
+###      - image: $CIRCLE_PROJECT_USERNAME/opencog-deps
+###        user: root
+###        environment:
+###          PGHOST: opencog-postgres
+###          PGUSER: opencog_test
+###          PGPASSWORD: cheese
+###          CCACHE_DIR: /ws/ccache
+###      - image: $CIRCLE_PROJECT_USERNAME/postgres
+###        name: opencog-postgres
+###    working_directory: /ws/atomspace-pgres
+###    steps:
+###      - attach_workspace:
+###          at: /ws/
+###      - run:
+###          name: Install CogUtil
+###          command: cd /ws/cogutil/build && make -j2 install && ldconfig
+###      - run:
+###          name: Install AtomSpace
+###          command: cd /ws/atomspace/build && make -j2 install && ldconfig
+###      - run:
+###          name: Install AtomSpaceStorage
+###          command: cd /ws/atomspace-storage/build && make -j2 install && ldconfig
+###      - run:
+###          name: Checkout AtomSpacePgres
+###          command: git clone --depth 1 https://github.com/$CIRCLE_PROJECT_USERNAME/atomspace-pgres .
+###      - run:
+###          name: CMake Configure
+###          command: mkdir build && cd build && cmake ..
+###      - run:
+###          name: Build
+###          command: cd build && make -j2
+###      - run:
+###          name: Build tests
+###          command: cd build && make -j2 tests
+###      - run:
+###          name: Run tests
+###          command: cd build && make check
+###      - run:
+###          name: Install AtomSpacePgres
+###          command: cd build && make -j2 install && ldconfig
+###      - run:
+###          name: Print test log
+###          command: cat build/tests/Testing/Temporary/LastTest.log
+###          when: always
+###      - persist_to_workspace:
+###          root: /ws/
+###          paths:
+###            - atomspace-pgres
+###            # See https://github.com/opencog/cogutil/commit/da53c4079c3972904857a365a7761ac5923e4e92
+###            # - ccache
+
+  atomspace-rocks:
+    docker:
+      - image: $CIRCLE_PROJECT_USERNAME/opencog-deps
+        user: root
+        environment:
+          CCACHE_DIR: /ws/ccache
+    working_directory: /ws/atomspace-rocks
+    steps:
+      - attach_workspace:
+          at: /ws/
+      - run:
+          name: Install CogUtil
+          command: cd /ws/cogutil/build && make -j2 install && ldconfig
+      - run:
+          name: Install AtomSpace
+          command: cd /ws/atomspace/build && make -j2 install && ldconfig
+      - run:
+          name: Install AtomSpaceStorage
+          command: cd /ws/atomspace-storage/build && make -j2 install && ldconfig
+      - run:
+          name: Checkout AtomSpaceRocks
+          command: git clone --depth 1 https://github.com/$CIRCLE_PROJECT_USERNAME/atomspace-rocks .
+      - run:
+          name: CMake Configure
+          command: mkdir build && cd build && cmake ..
+      - run:
+          name: Build
+          command: cd build && make -j2
+      - run:
+          name: Build tests
+          command: cd build && make -j2 tests
+      - run:
+          name: Run tests
+          command: cd build && make check
+      - run:
+          name: Install AtomSpaceRocks
+          command: cd build && make -j2 install && ldconfig
+      - run:
+          name: Print test log
+          command: cat build/tests/Testing/Temporary/LastTest.log
+          when: always
+      - persist_to_workspace:
+          root: /ws/
+          paths:
+            - atomspace-rocks
+            # See https://github.com/opencog/cogutil/commit/da53c4079c3972904857a365a7761ac5923e4e92
+            # - ccache
+
+  cogserver:
+    docker:
+      - image: $CIRCLE_PROJECT_USERNAME/opencog-deps
+        user: root
+        environment:
+          CCACHE_DIR: /ws/ccache
+    working_directory: /ws/cogserver
+    steps:
+      - attach_workspace:
+          at: /ws
+      - run:
+          name: Set number of make jobs
+          command: echo "export MAKEFLAGS=-j2" >> $BASH_ENV
+      - run:
+          name: Install CogUtil
+          command: cd /ws/cogutil/build && make -j2 install && ldconfig
+      - run:
+          name: Install AtomSpace
+          command: cd /ws/atomspace/build && make install && ldconfig
+      - run:
+          name: Install AtomSpaceStorage
+          command: cd /ws/atomspace-storage/build && make -j2 install && ldconfig
+      - run:
+          name: Checkout CogServer
+          command: git clone --depth 1 https://github.com/$CIRCLE_PROJECT_USERNAME/cogserver .
+      - run:
+          name: CMake Configure
+          command: mkdir build && cd build && cmake ..
+      - run:
+          name: Build
+          command: cd build && make
+      - run:
+          name: Build tests
+          command: cd build && make tests
+      - run:
+          name: Run tests
+          command: cd build && make check ARGS="$MAKEFLAGS"
+      - run:
+          name: Print test log
+          command: cat build/tests/Testing/Temporary/LastTest.log
+          when: always
+      - run:
+          name: Install CogServer
+          command: cd build && make install && ldconfig
+      - persist_to_workspace:
+          root: /ws/
+          paths:
+            - cogserver
+            - ccache
+
+  atomspace-cog:
+    docker:
+      - image: $CIRCLE_PROJECT_USERNAME/opencog-deps
+        user: root
+        environment:
+          CCACHE_DIR: /ws/ccache
+    working_directory: /ws/atomspace-cog
+    steps:
+      - attach_workspace:
+          at: /ws/
+      - run:
+          name: Install CogUtil
+          command: cd /ws/cogutil/build && make -j2 install && ldconfig
+      - run:
+          name: Install AtomSpace
+          command: cd /ws/atomspace/build && make -j2 install && ldconfig
+      - run:
+          name: Install AtomSpace Storage
+          command: cd /ws/atomspace-storage/build && make -j2 install && ldconfig
+      - run:
+          name: Install CogServer
+          command: cd /ws/cogserver/build && make -j2 install && ldconfig
+      - run:
+          name: Checkout AtomSpace Cog
+          command: git clone --depth 1 https://github.com/$CIRCLE_PROJECT_USERNAME/atomspace-cog .
+      - run:
+          name: CMake Configure
+          command: mkdir build && cd build && cmake ..
+      - run:
+          name: Build
+          command: cd build && make -j2
+      - run:
+          name: Build tests
+          command: cd build && make -j2 tests
+      - run:
+          name: Run tests
+          command: cd build && make check
+      - run:
+          name: Print test log
+          command: cat build/tests/Testing/Temporary/LastTest.log
+          when: always
+      - run:
+          name: Install AtomSpace Cog
+          command: cd build && make -j2 install && ldconfig
+      - persist_to_workspace:
+          root: /ws/
+          paths:
+            - atomspace-cog
+            # See https://github.com/opencog/cogutil/commit/da53c4079c3972904857a365a7761ac5923e4e92
+            # - ccache
+
+  lg-atomese:
+    docker:
+      - image: $CIRCLE_PROJECT_USERNAME/opencog-deps
+        user: root
+        environment:
+          CCACHE_DIR: /ws/ccache
+    working_directory: /ws/lg-atomese
+    steps:
+      - attach_workspace:
+          at: /ws/
+      - run:
+          name: Install CogUtil
+          command: cd /ws/cogutil/build && make -j2 install && ldconfig
+      - run:
+          name: Install AtomSpace
+          command: cd /ws/atomspace/build && make -j2 install && ldconfig
+      - run:
+          name: Install AtomSpace Storage
+          command: cd /ws/atomspace-storage/build && make -j2 install && ldconfig
+      - run:
+          name: Checkout LG-Atomese system
+          command: git clone --depth 1 https://github.com/$CIRCLE_PROJECT_USERNAME/lg-atomese .
+      - run:
+          name: CMake Configure
+          command: mkdir build && cd build && cmake ..
+      - run:
+          name: Build
+          command: cd build && make -j2
+      - run:
+          name: Build tests
+          command: cd build && make -j2 tests
+      - run:
+          name: Run tests
+          command: cd build && make check
+      - run:
+          name: Install LG-Atomese
+          command: cd build && make -j2 install && ldconfig
+      - run:
+          name: Print test log
+          command: cat build/tests/Testing/Temporary/LastTest.log
+          when: always
+      - persist_to_workspace:
+          root: /ws/
+          paths:
+            - lg-atomese
+            # See https://github.com/opencog/cogutil/commit/da53c4079c3972904857a365a7761ac5923e4e92
+            # - ccache
+
+  matrix:
+    docker:
+      - image: $CIRCLE_PROJECT_USERNAME/opencog-deps
+        user: root
+        environment:
+          CCACHE_DIR: /ws/ccache
+    working_directory: /ws/matrix
+    steps:
+      - attach_workspace:
+          at: /ws/
+      - run:
+          name: Install CogUtil
+          command: cd /ws/cogutil/build && make -j2 install && ldconfig
+      - run:
+          name: Install AtomSpace
+          command: cd /ws/atomspace/build && make -j2 install && ldconfig
+      - run:
+          name: Install AtomSpaceStorage
+          command: cd /ws/atomspace-storage/build && make -j2 install && ldconfig
+      - run:
+          name: Install AtomSpaceRocks
+          command: cd /ws/atomspace-rocks/build && make -j2 install && ldconfig
+      - run:
+          name: Checkout Matrix system
+          command: git clone --depth 1 https://github.com/$CIRCLE_PROJECT_USERNAME/matrix .
+      - run:
+          name: CMake Configure
+          command: mkdir build && cd build && cmake ..
+      - run:
+          name: Build
+          command: cd build && make -j2
+      - run:
+          name: Build tests
+          command: cd build && make -j2 tests
+      - run:
+          name: Run tests
+          command: cd build && make check
+      - run:
+          name: Install Matrix
+          command: cd build && make -j2 install && ldconfig
+      - run:
+          name: Print test log
+          command: cat build/tests/Testing/Temporary/LastTest.log
+          when: always
+      - persist_to_workspace:
+          root: /ws/
+          paths:
+            - matrix
+            # See https://github.com/opencog/cogutil/commit/da53c4079c3972904857a365a7761ac5923e4e92
+            # - ccache
+
+  sensory:
+    docker:
+      - image: $CIRCLE_PROJECT_USERNAME/opencog-deps
+        user: root
+        environment:
+          CCACHE_DIR: /ws/ccache
+    working_directory: /ws/sensory
+    steps:
+      - attach_workspace:
+          at: /ws/
+      - run:
+          name: Install CogUtil
+          command: cd /ws/cogutil/build && make -j2 install && ldconfig
+      - run:
+          name: Install AtomSpace
+          command: cd /ws/atomspace/build && make -j2 install && ldconfig
+      - run:
+          name: Checkout Sensory
+          command: git clone --depth 1 https://github.com/$CIRCLE_PROJECT_USERNAME/sensory .
+      - run:
+          name: CMake Config Sensory
+          command: mkdir build && cd build && cmake ..
+      - run:
+          name: Build
+          command: cd build && make -j2
+      - run:
+          name: Build tests
+          command: cd build && make -j2 tests
+      - run:
+          name: Run tests
+          command: cd build && make -j2 check ARGS=-j2
+      - run:
+          name: Install Sensory
+          command: cd build && make -j2 install && ldconfig
+      - run:
+          name: Print test log
+          command: cat build/tests/Testing/Temporary/LastTest.log
+          when: always
+      - persist_to_workspace:
+          root: /ws/
+          paths:
+            - sensory
+            # See https://github.com/opencog/cogutil/commit/da53c4079c3972904857a365a7761ac5923e4e92
+            # - ccache
+
+  unify:
+    docker:
+      - image: $CIRCLE_PROJECT_USERNAME/opencog-deps
+        user: root
+        environment:
+          CCACHE_DIR: /ws/ccache
+    working_directory: /ws/unify
+    steps:
+      - attach_workspace:
+          at: /ws/
+      - run:
+          name: Install CogUtil
+          command: cd /ws/cogutil/build && make -j2 install && ldconfig
+      - run:
+          name: Install AtomSpace
+          command: cd /ws/atomspace/build && make -j2 install && ldconfig
+      - run:
+          name: Checkout Unify
+          command: git clone --depth 1 https://github.com/$CIRCLE_PROJECT_USERNAME/unify .
+      - run:
+          name: CMake Configunify
+          command: mkdir build && cd build && cmake ..
+      - run:
+          name: Build
+          command: cd build && make -j2
+      - run:
+          name: Build tests
+          command: cd build && make -j2 tests
+      - run:
+          name: Run tests
+          command: cd build && make -j2 check ARGS=-j2
+      - run:
+          name: Install Unify
+          command: cd build && make -j2 install && ldconfig
+      - run:
+          name: Print test log
+          command: cat build/tests/Testing/Temporary/LastTest.log
+          when: always
+      - persist_to_workspace:
+          root: /ws/
+          paths:
+            - unify
+            # See https://github.com/opencog/cogutil/commit/da53c4079c3972904857a365a7761ac5923e4e92
+            # - ccache
+
+  as-moses:
+    docker:
+      - image: $CIRCLE_PROJECT_USERNAME/opencog-deps
+        user: root
+        environment:
+          CCACHE_DIR: /ws/ccache
+    working_directory: /ws/as-moses
+    steps:
+      - attach_workspace:
+          at: /ws
+      - run:
+          name: Set number of make jobs
+          command: echo "export MAKEFLAGS=-j2" >> $BASH_ENV
+      - run:
+          name: Install CogUtil
+          command: cd /ws/cogutil/build && make install && ldconfig
+      - run:
+          name: Install AtomSpace
+          command: cd /ws/atomspace/build && make -j2 install && ldconfig
+      - run:
+          name: Install Unify
+          command: cd /ws/unify/build && make -j2 install && ldconfig
+      - run:
+          name: Checkout AS-MOSES
+          command: git clone --depth 1 https://github.com/$CIRCLE_PROJECT_USERNAME/as-moses .
+      - run:
+          name: CMake Configure
+          command: mkdir build && cd build && cmake ..
+      - run:
+          name: Build
+          command: cd build && make
+      - run:
+          name: Build tests
+          command: cd build && make tests
+      - run:
+          name: Run tests
+          # Running tests in parallel seems to result in test failures.
+          # I don't know why
+          # command: cd build && make check ARGS="$MAKEFLAGS"
+          command: cd build && make check
+      - run:
+          name: Install AS-MOSES
+          command: cd build && make install && ldconfig
+      - run:
+          name: Print test log
+          command: cat build/tests/Testing/Temporary/LastTest.log
+          when: always
+      - persist_to_workspace:
+          root: /ws/
+          paths:
+            - as-moses
+            - ccache
+
+  package: #Place holder
+    docker:
+      - image: $CIRCLE_PROJECT_USERNAME/opencog-deps
+        user: root
+    working_directory: /ws/atomspace
+    steps:
+      - attach_workspace:
+          at: /ws/
+      - run:
+          name: Start storing ccache
+          command: date +%d-%m-%Y > /tmp/date
+      - save_cache:
+          key: ccache-{{ checksum "/tmp/date" }}
+          paths:
+            - /ws/ccache
+
+workflows:
+  version: 2
+  build-test-package:
+    jobs:
+      - atomspace
+      - atomspace-storage:
+          requires:
+            - atomspace
+###      - atomspace-pgres:
+###          requires:
+###            - atomspace
+###            - atomspace-storage
+      - atomspace-rocks:
+          requires:
+            - atomspace
+            - atomspace-storage
+      - cogserver:
+          requires:
+            - atomspace
+            - atomspace-storage
+      - atomspace-cog:
+          requires:
+            - atomspace
+            - atomspace-storage
+            - cogserver
+      - lg-atomese:
+          requires:
+            - atomspace
+            - atomspace-storage
+      - matrix:
+          requires:
+            - atomspace
+            - atomspace-rocks
+      - sensory:
+          requires:
+            - atomspace
+      - unify:
+          requires:
+            - atomspace
+# Disable as-moses Apr 2024 Works fine, AtomSpace unlikely to break it,
+# takes wayyy too long to run, and the debug message logs overflow
+# circle-ci and so cirle-ci complains. So just disable.
+#      - as-moses:
+#          requires:
+#            - atomspace
+      - package:
+          requires:
+            - atomspace
+            - atomspace-cog
+            - atomspace-rocks
+            - atomspace-storage
+            - cogserver
+            - lg-atomese
+            - matrix
+            - sensory
+            - unify
+          filters:
+            branches:
+              only: master

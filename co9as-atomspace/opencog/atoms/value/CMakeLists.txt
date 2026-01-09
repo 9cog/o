@@ -1,0 +1,58 @@
+INCLUDE_DIRECTORIES(${CMAKE_CURRENT_BINARY_DIR})
+
+ADD_LIBRARY (value
+	Value.cc
+	BoolValue.cc
+	ContainerValue.cc
+	Float32Value.cc
+	FlatStream.cc
+	FloatValue.cc
+	FormulaStream.cc
+	FutureStream.cc
+	GroupValue.cc
+	LinkValue.cc
+	QueueValue.cc
+	RandomStream.cc
+	RelationalValue.cc
+	SectionValue.cc
+	SortedValue.cc
+	StringValue.cc
+	UnisetValue.cc
+	ValueFactory.cc
+	VoidValue.cc
+)
+
+# Without this, parallel make will race and crap up the generated files.
+ADD_DEPENDENCIES(value opencog_atom_types)
+
+TARGET_LINK_LIBRARIES(value
+	atom_types
+	${COGUTIL_LIBRARY}
+)
+
+INSTALL (TARGETS value EXPORT AtomSpaceTargets
+	DESTINATION "${CMAKE_INSTALL_LIBDIR}/opencog"
+)
+
+INSTALL (FILES
+	BoolValue.h
+	ContainerValue.h
+	FlatStream.h
+	Float32Value.h
+	FloatValue.h
+	FormulaStream.h
+	FutureStream.h
+	GroupValue.h
+	LinkValue.h
+	QueueValue.h
+	RandomStream.h
+	RelationalValue.h
+	SectionValue.h
+	SortedValue.h
+	StringValue.h
+	UnisetValue.h
+	Value.h
+	ValueFactory.h
+	VoidValue.h
+	DESTINATION "include/opencog/atoms/value"
+)

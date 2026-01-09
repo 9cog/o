@@ -1,0 +1,200 @@
+/*
+ * tests/shell/JsonShellUTest.cxxtest
+ *
+ * Test for JSON Shell functionality
+ * Copyright (c) 2024 OpenCog Contributors
+ * All Rights Reserved
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License v3 as
+ * published by the Free Software Foundation and including the exceptions
+ * at http://opencog.org/wiki/Licenses
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program; if not, see http://www.gnu.org/licenses/
+ */
+
+#include <thread>
+#include <unistd.h>
+
+#include <opencog/atomspace/AtomSpace.h>
+#include <opencog/atoms/atom_types/atom_names.h>
+#include <opencog/atoms/value/FloatValue.h>
+#include <opencog/atoms/value/VoidValue.h>
+#include <opencog/cogserver/atoms/CogServerNode.h>
+
+using namespace opencog;
+
+std::string json_cmd_exec(const char* cmd)
+{
+    char buf[1000];
+    std::string result;
+    std::shared_ptr<FILE> pope(popen(cmd, "r"), pclose);
+    if (!pope) throw std::runtime_error("popen() failed!");
+    while (!feof(pope.get())) {
+        if (fgets(buf, sizeof(buf), pope.get()) != NULL)
+            result += buf;
+    }
+    return result;
+}
+
+class JsonShellUTest : public CxxTest::TestSuite
+{
+private:
+    AtomSpacePtr asp;
+    CogServerNodePtr csrv;
+    int port = 17335;  // Different port from McpShellUTest
+
+public:
+    JsonShellUTest()
+    {
+        logger().set_level(Logger::INFO);
+
+        asp = createAtomSpace();
+        Handle hcsn = asp->add_node(COG_SERVER_NODE, "test-cogserver");
+        csrv = CogServerNodeCast(hcsn);
+
+        // Set ports and start the server
+        csrv->setValue(asp->add_atom(Predicate("*-telnet-port-*")),
+                       createFloatValue((double)port));
+        csrv->setValue(asp->add_atom(Predicate("*-web-port-*")),
+                       createFloatValue(0.0));
+        csrv->setValue(asp->add_atom(Predicate("*-mcp-port-*")),
+                       createFloatValue(0.0));
+        csrv->setValue(asp->add_atom(Predicate("*-start-*")),
+                       createVoidValue());
+    }
+
+    ~JsonShellUTest()
+    {
+        csrv->setValue(asp->add_atom(Predicate("*-stop-*")),
+                       createVoidValue());
+        csrv = nullptr;
+        asp = nullptr;
+
+        if (!CxxTest::TestTracker::tracker().suiteFailed())
+            std::remove(logger().get_filename().c_str());
+    }
+
+    void setUp()
+    {
+    }
+
+    void tearDown()
+    {
+    }
+
+    void testJsonShellBasic()
+    {
+        logger().debug("BEGIN TEST: %s", __FUNCTION__);
+
+        // Test basic JSON shell interaction
+        std::string cmd = "printf 'json\\n.\\n' | nc -q 1 localhost " + std::to_string(port);
+        int rc = system(cmd.c_str());
+        TS_ASSERT_EQUALS(rc, 0);
+
+        logger().debug("END TEST: %s", __FUNCTION__);
+    }
+
+    void testJsonShellQuery()
+    {
+        logger().debug("BEGIN TEST: %s", __FUNCTION__);
+
+        // Test JSON query functionality with AtomSpace.version() using netcat
+        std::string result = json_cmd_exec(
+            "printf 'json\\nAtomSpace.version()\\n' | nc -q 1 localhost 17335");
+
+        // The reply should contain a version number
+        TS_ASSERT(result.size() > 0);
+        TS_ASSERT(result.find(".") != std::string::npos);
+
+        logger().debug("END TEST: %s", __FUNCTION__);
+    }
+
+    void testJsonShellEvaluator()
+    {
+        logger().debug("BEGIN TEST: %s", __FUNCTION__);
+
+        // Test JSON shell evaluation via netcat
+        std::string result = json_cmd_exec(
+            "printf 'json\\nAtomSpace.version()\\n' | nc -q 1 localhost 17335");
+
+        TS_ASSERT(result.size() > 0);
+        // The version should be a numeric string with a dot
+        TS_ASSERT(result.find(".") != std::string::npos);
+
+        logger().debug("END TEST: %s", __FUNCTION__);
+    }
+
+    void testJsonShellAtomSpaceIntegration()
+    {
+        logger().debug("BEGIN TEST: %s", __FUNCTION__);
+
+        // First, add an atom using the Scheme shell
+        int rc = system("printf '(Concept \"test-concept-json\")\\n' | nc -q 1 localhost 17335");
+        TS_ASSERT_EQUALS(rc, 0);
+        usleep(50000);
+
+        // Test JSON shell can access the atom
+        std::string result = json_cmd_exec(
+            "printf 'json\\nAtomSpace.haveNode(\"Concept\", \"test-concept-json\")\\n' | nc -q 1 localhost 17335");
+
+        printf("Do we have the node? result=>>>%s<<<\n", result.c_str());
+        // Should return "true"
+        TS_ASSERT(result.find("true") != std::string::npos);
+
+        logger().debug("END TEST: %s", __FUNCTION__);
+    }
+
+    void testJsonShellGetAtoms()
+    {
+        logger().debug("BEGIN TEST: %s", __FUNCTION__);
+
+        // Add some atoms using the Scheme shell
+        int rc = system("printf '(Concept \"json-test-1\")\\n' | nc -q 1 localhost 17335");
+        TS_ASSERT_EQUALS(rc, 0);
+        usleep(50000);
+        rc = system("printf '(Concept \"json-test-2\")\\n' | nc -q 1 localhost 17335");
+        TS_ASSERT_EQUALS(rc, 0);
+        usleep(50000);
+        rc = system("printf '(Number 42)\\n' | nc -q 1 localhost 17335");
+        TS_ASSERT_EQUALS(rc, 0);
+        usleep(50000);
+
+        // Get all ConceptNodes via JSON shell
+        std::string result = json_cmd_exec(
+            "printf 'json\\nAtomSpace.getAtoms(\"ConceptNode\")\\n' | nc -q 1 localhost 17335");
+
+        printf("Did we get the Concepts? result=>>>%s<<<\n", result.c_str());
+        TS_ASSERT(result.find("json-test-1") != std::string::npos);
+        TS_ASSERT(result.find("json-test-2") != std::string::npos);
+
+        logger().debug("END TEST: %s", __FUNCTION__);
+    }
+
+    void testJsonShellMakeAtom()
+    {
+        logger().debug("BEGIN TEST: %s", __FUNCTION__);
+
+        // Create a new atom via JSON command
+        std::string result = json_cmd_exec(
+            "printf 'json\\nAtomSpace.makeAtom({\"type\": \"Concept\", \"name\": \"json-created\"})\\n' | nc -q 1 localhost 17335");
+
+        printf("Did we make the Concept? result=>>>%s<<<\n", result.c_str());
+        TS_ASSERT(result.find("true") != std::string::npos);
+
+        // Verify the atom was created by checking with haveNode
+        std::string verify = json_cmd_exec(
+            "printf 'json\\nAtomSpace.haveNode(\"Concept\", \"json-created\")\\n' | nc -q 1 localhost 17335");
+
+        printf("Did verification work? verify=>>>%s<<<\n", result.c_str());
+        TS_ASSERT(verify.find("true") != std::string::npos);
+
+        logger().debug("END TEST: %s", __FUNCTION__);
+    }
+};

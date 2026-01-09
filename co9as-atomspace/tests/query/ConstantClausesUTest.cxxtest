@@ -1,0 +1,305 @@
+/*
+ * tests/query/ConstantClausesUTest.cxxtest
+ *
+ * Copyright (C) 2017 OpenCog Foundation
+ * All Rights Reserved
+ * Author: Nil Geisweiller
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License v3 as
+ * published by the Free Software Foundation and including the exceptions
+ * at http://opencog.org/wiki/Licenses
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program; if not, write to:
+ * Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
+
+#include <opencog/guile/SchemeEval.h>
+#include <opencog/atomspace/AtomSpace.h>
+#include <opencog/util/Logger.h>
+
+using namespace std;
+using namespace opencog;
+
+#define al as->add_link
+#define an as->add_node
+
+class ConstantClausesUTest: public CxxTest::TestSuite
+{
+private:
+	AtomSpacePtr as;
+	SchemeEval* eval;
+	Handle A, B, C, AB, IdAA, P, Q, X, LP, LQ;
+
+public:
+	ConstantClausesUTest() : as(createAtomSpace()), eval(SchemeEval::get_scheme_evaluator(as))
+	{
+		logger().set_level(Logger::DEBUG);
+		logger().set_timestamp_flag(false);
+		logger().set_print_to_stdout_flag(true);
+
+		string dir = string(PROJECT_SOURCE_DIR) + "/tests/query";
+		eval->eval(string("(add-to-load-path \"") + dir + string("\")"));
+	}
+
+	~ConstantClausesUTest()
+	{
+		// Erase the log file if no assertions failed.
+		if (!CxxTest::TestTracker::tracker().suiteFailed())
+				std::remove(logger().get_filename().c_str());
+	}
+
+	void setUp();
+	void tearDown();
+
+	void test_constant_1();
+	void test_constant_2();
+	void test_constant_3();
+	void test_evaluatable_1();
+	void test_evaluatable_2();
+	void test_evaluatable_3();
+	void test_constant_evaluatable_1();
+	void test_constant_evaluatable_2();
+	void test_constant_pattern();
+	void test_mixed_clauses_1();
+	void test_mixed_clauses_2();
+	void test_mixed_clauses_3();
+};
+
+void ConstantClausesUTest::tearDown()
+{
+	as->clear();
+}
+
+void ConstantClausesUTest::setUp()
+{
+	A = an(CONCEPT_NODE, "A");
+	B = an(CONCEPT_NODE, "B");
+	C = an(CONCEPT_NODE, "C");
+	AB = al(INHERITANCE_LINK, A, B);
+	IdAA = al(IDENTICAL_LINK, A, A);
+	P = an(PREDICATE_NODE, "P");
+	Q = an(PREDICATE_NODE, "Q");
+	X = an(VARIABLE_NODE, "$X");
+	LP = al(LAMBDA_LINK, X, al(EVALUATION_LINK, P));
+	LQ = al(LAMBDA_LINK, X, al(EVALUATION_LINK, Q));
+}
+
+/*
+ * Simple Concept as constant clause.
+ */
+void ConstantClausesUTest::test_constant_1()
+{
+	logger().debug("BEGIN TEST: %s", __FUNCTION__);
+	Handle bl = al(COLLECTION_OF_LINK, al(QUERY_LINK, A, B)),
+		result = HandleCast(bl->execute(as.get())),
+		expected = al(SET_LINK, B);
+	TS_ASSERT_EQUALS(result, expected);
+	logger().debug("END TEST: %s", __FUNCTION__);
+}
+
+/*
+ * Simple Inheritance link as constant clause.
+ */
+void ConstantClausesUTest::test_constant_2()
+{
+	logger().debug("BEGIN TEST: %s", __FUNCTION__);
+	Handle bl = al(COLLECTION_OF_LINK, al(QUERY_LINK, AB, C)),
+		result = HandleCast(bl->execute(as.get())),
+		expected = al(SET_LINK, C);
+	TS_ASSERT_EQUALS(result, expected);
+	logger().debug("END TEST: %s", __FUNCTION__);
+}
+
+/*
+ * Conjunction of Concept and Inheritance as constant clauses.
+ */
+void ConstantClausesUTest::test_constant_3()
+{
+	logger().debug("BEGIN TEST: %s", __FUNCTION__);
+	Handle bl = al(COLLECTION_OF_LINK, al(QUERY_LINK, al(AND_LINK, AB, A), C)),
+		result = HandleCast(bl->execute(as.get())),
+		expected = al(SET_LINK, C);
+	TS_ASSERT_EQUALS(result, expected);
+	logger().debug("END TEST: %s", __FUNCTION__);
+}
+
+/*
+ * Simple clause with an evaluatable constant clause that is true (so
+ * the rewrite term should be triggered).
+ */
+void ConstantClausesUTest::test_evaluatable_1()
+{
+	logger().debug("BEGIN TEST: %s", __FUNCTION__);
+	Handle bl = al(COLLECTION_OF_LINK, al(QUERY_LINK, IdAA, B)),
+		result = HandleCast(bl->execute(as.get())),
+		expected = al(SET_LINK, B);
+	TS_ASSERT_EQUALS(result, expected);
+	logger().debug("END TEST: %s", __FUNCTION__);
+}
+
+/*
+ * Simple clause with an evaluatable constant clause that is false (so
+ * the rewrite term should not be triggered).
+ */
+void ConstantClausesUTest::test_evaluatable_2()
+{
+	logger().debug("BEGIN TEST: %s", __FUNCTION__);
+	Handle bl = al(COLLECTION_OF_LINK, al(QUERY_LINK, al(NOT_LINK, IdAA), B)),
+		result = HandleCast(bl->execute(as.get())),
+		expected = al(SET_LINK);
+	TS_ASSERT_EQUALS(result, expected);
+	logger().debug("END TEST: %s", __FUNCTION__);
+}
+
+/*
+ * Simple clause with an evaluatable constant clause that is false (so
+ * the rewrite term should not be triggered).
+ */
+void ConstantClausesUTest::test_evaluatable_3()
+{
+	logger().debug("BEGIN TEST: %s", __FUNCTION__);
+	Handle bl = al(COLLECTION_OF_LINK, al(QUERY_LINK, al(AND_LINK, IdAA, al(NOT_LINK, IdAA)), B)),
+		result = HandleCast(bl->execute(as.get())),
+		expected = al(SET_LINK);
+	TS_ASSERT_EQUALS(result, expected);
+	logger().debug("END TEST: %s", __FUNCTION__);
+}
+
+/*
+ * Simple Concept as constant clause with an evaluatable constant
+ * clause that is true (so the rewrite term should be triggered).
+ */
+void ConstantClausesUTest::test_constant_evaluatable_1()
+{
+	logger().debug("BEGIN TEST: %s", __FUNCTION__);
+	Handle bl = al(COLLECTION_OF_LINK, al(QUERY_LINK, al(AND_LINK, A, IdAA), B)),
+		result = HandleCast(bl->execute(as.get())),
+		expected = al(SET_LINK, B);
+	printf("  Found : %s\n", result->to_string().c_str());
+	printf("Expected: %s\n", expected->to_string().c_str());
+	TS_ASSERT_EQUALS(result, expected);
+	logger().debug("END TEST: %s", __FUNCTION__);
+}
+
+/*
+ * Simple Concept as constant clause with a evaluatable constant
+ * clause that is false (so the rewrite term should not be triggered).
+ */
+void ConstantClausesUTest::test_constant_evaluatable_2()
+{
+	logger().debug("BEGIN TEST: %s", __FUNCTION__);
+	Handle bl = al(COLLECTION_OF_LINK, al(QUERY_LINK, al(AND_LINK, A, al(NOT_LINK, IdAA)), B)),
+		result = HandleCast(bl->execute(as.get())),
+		expected = al(SET_LINK);
+	TS_ASSERT_EQUALS(result, expected);
+	logger().debug("END TEST: %s", __FUNCTION__);
+}
+
+/**
+ * Constant clauses in a child atomspace would be expected not to be
+ * accessible from the parent atomspace, so the rewrite term would not
+ * be triggered, however constant clause are removed, regardless of
+ * whether they belong to the queried atomspace or not, thus, since
+ * empty is synonymous to true, the rewrite term is triggered.
+ */
+void ConstantClausesUTest::test_constant_pattern()
+{
+	logger().debug("BEGIN TEST: %s", __FUNCTION__);
+	AtomSpacePtr derived_as(as);
+	Handle DA = derived_as->add_node(CONCEPT_NODE, "DA"),
+		DB = derived_as->add_node(CONCEPT_NODE, "DB"),
+		bl = derived_as->add_link(COLLECTION_OF_LINK,
+		                         derived_as->add_link(QUERY_LINK,
+		                                             derived_as->add_link(INHERITANCE_LINK, DA, DB),
+		                                             DB)),
+		result = HandleCast(bl->execute(as.get())),
+		expected = al(SET_LINK, DB);
+	TS_ASSERT_EQUALS(result, expected);
+	logger().debug("END TEST: %s", __FUNCTION__);
+}
+
+/**
+ * Clauses consisting of both ungrounded and grounded (constant)
+ * clauses should trigger the rewrite term properly.
+ */
+void ConstantClausesUTest::test_mixed_clauses_1()
+{
+	logger().debug("BEGIN TEST: %s", __FUNCTION__);
+	Handle mary = an(CONCEPT_NODE, "Mary"),
+		edward = an(CONCEPT_NODE, "Edward");
+
+	eval->eval("(load-from-path \"constant-clauses.scm\")");
+
+	Handle result = eval->eval_h("(cog-execute! mixed-clauses)"),
+		expected = al(SET_LINK, edward, mary);
+
+	TS_ASSERT_EQUALS(result, expected);
+	logger().debug("END TEST: %s", __FUNCTION__);
+}
+
+/**
+ * Clauses consisting of ungrounded, grounded (constant) and virtual
+ * clauses.
+ */
+void ConstantClausesUTest::test_mixed_clauses_2()
+{
+	logger().debug("BEGIN TEST: %s", __FUNCTION__);
+	eval->eval("(load-from-path \"blair-witch.scm\")");
+
+	Handle query = eval->eval_h("find-something");
+	Handle result = HandleCast(query->execute(as.get()));
+	Handle expected = al(SET_LINK, A);
+
+	logger().debug() << "y result = " << oc_to_string(result);
+	logger().debug() << "expected = " << oc_to_string(expected);
+
+	TS_ASSERT_EQUALS(result, expected);
+
+	query = eval->eval_h("find-nothing"),
+	result = HandleCast(query->execute(as.get())),
+	expected = al(SET_LINK);
+
+	logger().debug() << "n result = " << oc_to_string(result);
+	logger().debug() << "expected = " << oc_to_string(expected);
+
+	TS_ASSERT_EQUALS(result, expected);
+	logger().debug("END TEST: %s", __FUNCTION__);
+}
+
+/**
+ * Clauses consisting of ungrounded, grounded (constant).
+ */
+void ConstantClausesUTest::test_mixed_clauses_3()
+{
+	logger().debug("BEGIN TEST: %s", __FUNCTION__);
+	eval->eval("(load-from-path \"constant-scope.scm\")");
+
+	Handle query = eval->eval_h("query"),
+		result = HandleCast(query->execute(as.get())),
+		expected = eval->eval_h("expected");
+	HandleSet results(result->getOutgoingSet().begin(),
+	                  result->getOutgoingSet().end()),
+		more_expected(expected->getOutgoingSet().begin(),
+		              expected->getOutgoingSet().end());
+
+	// Add the other LambdaLinks
+	more_expected.insert(LP);
+	more_expected.insert(LQ);
+
+	logger().debug() << "results = " << oc_to_string(results);
+	logger().debug() << "more_expected = " << oc_to_string(more_expected);
+
+	TS_ASSERT_EQUALS(results, more_expected);
+	logger().debug("END TEST: %s", __FUNCTION__);
+}
+
+#undef al
+#undef an

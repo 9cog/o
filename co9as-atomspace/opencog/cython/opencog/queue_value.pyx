@@ -1,0 +1,125 @@
+from cython.operator cimport dereference as deref, preincrement as inc
+from libcpp.vector cimport vector
+from libcpp cimport bool
+
+def createQueueValue(arg=None):
+    cdef shared_ptr[cQueueValue] c_ptr
+    if arg is None:
+        c_ptr = c_createQueueValue_empty()
+    elif isinstance(arg, list):
+        c_ptr = c_createQueueValue_vector(QueueValue.list_of_values_to_vector(arg))
+    else:
+        c_ptr = c_createQueueValue_vector(QueueValue.list_of_values_to_vector([arg]))
+    cdef QueueValue instance = QueueValue.__new__(QueueValue)
+    instance.shared_ptr = <cValuePtr&>(c_ptr, c_ptr.get())
+    return instance
+
+cdef class QueueValue(Value):
+
+    def __init__(self, arg=None):
+        # Allow construction: QueueValue(), QueueValue([val1, val2]), QueueValue(val)
+        # Note: __init__ is always called after __new__, so we check if already initialized
+        cdef shared_ptr[cQueueValue] c_ptr
+        if arg is None:
+            c_ptr = c_createQueueValue_empty()
+        elif isinstance(arg, list):
+            c_ptr = c_createQueueValue_vector(QueueValue.list_of_values_to_vector(arg))
+        else:
+            c_ptr = c_createQueueValue_vector(QueueValue.list_of_values_to_vector([arg]))
+        self.shared_ptr = <cValuePtr&>(c_ptr, c_ptr.get())
+
+    def open(self):
+        """Open the queue for adding/removing values."""
+        cdef cQueueValue* queue_ptr = <cQueueValue*>self.get_c_raw_ptr()
+        with nogil:
+            queue_ptr.open()
+
+    def close(self):
+        """Close the queue. No more values can be added after closing."""
+        cdef cQueueValue* queue_ptr = <cQueueValue*>self.get_c_raw_ptr()
+        with nogil:
+            queue_ptr.close()
+
+    def is_closed(self):
+        """Check if the queue is closed."""
+        cdef cQueueValue* queue_ptr = <cQueueValue*>self.get_c_raw_ptr()
+        cdef bool result
+        with nogil:
+            result = queue_ptr.is_closed()
+        return result
+
+    def clear(self):
+        """Remove all values from the queue."""
+        cdef cQueueValue* queue_ptr = <cQueueValue*>self.get_c_raw_ptr()
+        with nogil:
+            queue_ptr.clear()
+
+    def push(self, Value value):
+        """Add a value to the queue (same as add()).
+
+        Raises:
+            RuntimeError: If the queue is closed.
+        """
+        cdef cValuePtr val_ptr = value.get_c_value_ptr()
+        cdef cQueueValue* queue_ptr = <cQueueValue*>self.get_c_raw_ptr()
+
+        # Release the GIL since the C++ method is thread-safe
+        with nogil:
+            queue_ptr.add(val_ptr)
+
+    def pop(self):
+        """Remove and return a value from the queue (same as remove()).
+
+        Raises:
+            RuntimeError: If the queue is closed and empty.
+        """
+        cdef cValuePtr c_value
+        cdef cQueueValue* queue_ptr = <cQueueValue*>self.get_c_raw_ptr()
+
+        # Release the GIL while waiting for values, so other Python threads can run
+        try:
+            with nogil:
+                c_value = queue_ptr.remove()
+        except:
+            # Convert any exception from remove() to our RuntimeError
+            raise RuntimeError("Cannot pop from closed empty queue")
+
+        if c_value.get() == NULL:
+            return None
+        return create_python_value_from_c_value(c_value)
+
+    def append(self, Value value):
+        """Add a value to the queue (Python list-like interface)."""
+        self.push(value)
+
+    def __len__(self):
+        """Return the number of values in the queue."""
+        cdef cQueueValue* queue_ptr = <cQueueValue*>self.get_c_raw_ptr()
+        cdef size_t result
+        with nogil:
+            result = queue_ptr.size()
+        return result
+
+    def to_list(self):
+        """Convert the queue contents to a Python list."""
+        return QueueValue.vector_of_values_to_list(
+            &((<cQueueValue*>self.get_c_raw_ptr()).value()))
+
+    @staticmethod
+    cdef vector[cValuePtr] list_of_values_to_vector(list python_list):
+        cdef vector[cValuePtr] cpp_vector
+        cdef Value value
+        for value in python_list:
+            cpp_vector.push_back(value.get_c_value_ptr())
+        return cpp_vector
+
+    @staticmethod
+    cdef list vector_of_values_to_list(const vector[cValuePtr]* cpp_vector):
+        list = []
+        it = cpp_vector.const_begin()
+        cdef cValuePtr value
+        while it != cpp_vector.const_end():
+            value = deref(it)
+            list.append(create_python_value_from_c_value(value))
+            inc(it)
+        return list

@@ -1,0 +1,66 @@
+/**
+\page fsstructure Structure of the package
+
+This page gives some hints about the organisation of the
+package in directories and files.
+
+\section sect_main Main directory files
+
+<DL>
+
+<DT>AUTHORS</DT>
+<DD>lists persons that contributed to the project</DD>
+
+<DT>CMakeLists.txt</DT>
+<DD>control file for CMake build system</DD>
+
+<DT>LICENSE</DT>
+<DD>Same text as in \ref license page</DD>
+
+<DT>lib/cogutil.spec</DT>
+<DD>spec file for RPM package opencog</DD>
+
+<DT>README.md</DT>
+<DD>A high level overview of the project, various information</DD>
+</DL>
+
+\section sect_doc doc directory
+Documentation for various components is kept here.
+
+\section sect_examples examples directory
+Example code using opencog.
+
+\section sect_lib lib directory
+A number of cmake support files and other components (better name, anyone?).
+
+\section sect_opencog opencog directory
+Main source directory.
+<DL>
+
+<DT>cython</DT>
+<DD>Python bindings for OpenCog</DD>
+
+<DT>util</DT>
+<DD>Various code relevant to entire project; see \ref libcogutil "its page"</DD>
+</DL>
+
+
+\section sect_scripts scripts directory
+Support scripts for various tasks.
+
+\section sect_tests tests directory
+Source code for tests.
+
+\if MARKER_TREE_START
+ignored by doxygen; used as markers for update-links.py;
+\endif
+
+<TABLE width="100%" border="0"><TR>
+<TD>\ref progMapTools "Previous"</TD>
+<TD width="100%"></TD>
+<TD>\ref bldtargets "Next"</TD>
+</TR></TABLE>
+\if MARKER_TREE_END
+ignored by doxygen; used as markers for update-links.py;
+\endif
+*/

@@ -1,0 +1,198 @@
+/*
+ * tests/atoms/core/CondLinkUTest.cxxtest
+ *
+ * Copyright (C) 2019 Kasim Ebrahim
+ * All Rights Reserved
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License v3 as
+ * published by the Free Software Foundation and including the exceptions
+ * at http://opencog.org/wiki/Licenses
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program; if not, write to:
+ * Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
+
+#include <opencog/guile/SchemeEval.h>
+#include <opencog/atomspace/AtomSpace.h>
+#include <opencog/util/Logger.h>
+
+using namespace opencog;
+
+class CondLinkUTest : public CxxTest::TestSuite
+{
+private:
+	AtomSpacePtr as;
+	SchemeEval *eval;
+
+public:
+	CondLinkUTest(void)
+	{
+		logger().set_level(Logger::DEBUG);
+		logger().set_print_to_stdout_flag(true);
+
+		as = createAtomSpace();
+		eval = SchemeEval::get_scheme_evaluator(as);
+		eval->eval("(add-to-load-path \"" PROJECT_SOURCE_DIR "\")");
+	}
+
+	~CondLinkUTest()
+	{
+		// Erase the log file if no assertions failed.
+		if (!CxxTest::TestTracker::tracker().suiteFailed())
+			std::remove(logger().get_filename().c_str());
+	}
+
+	void setUp(void);
+
+	void tearDown(void);
+
+	void test_singleton(void);
+	void test_nondefault_exp(void);
+	void test_wrapped_exp();
+	void test_grounded_cond();
+	void xxxtest_knobs();
+};
+
+void CondLinkUTest::tearDown(void)
+{
+	as->clear();
+}
+
+void CondLinkUTest::setUp(void)
+{
+	as->clear();
+}
+
+void CondLinkUTest::test_singleton()
+{
+	logger().debug("BEGIN TEST: %s", __FUNCTION__);
+
+	eval->eval("(load-from-path \"tests/atoms/core/condlink.scm\")");
+
+	Handle result = eval->eval_h("(cog-execute! single)");
+
+	Handle baz = eval->eval_h("(Number -1)");
+	printf("got %s", result->to_string().c_str());
+	printf("expected %s\n", baz->to_string().c_str());
+
+	TS_ASSERT(result == baz);
+
+	logger().debug("END TEST: %s", __FUNCTION__);
+}
+
+void CondLinkUTest::test_nondefault_exp()
+{
+	logger().debug("BEGIN TEST: %s", __FUNCTION__);
+
+	eval->eval("(load-from-path \"tests/atoms/core/condlink.scm\")");
+
+	Handle result = eval->eval_h("(cog-execute! nondefault)");
+
+	Handle baz = eval->eval_h("(Number 5)");
+	printf("got %s", result->to_string().c_str());
+	printf("expected %s\n", baz->to_string().c_str());
+
+	TS_ASSERT(result == baz);
+
+	logger().debug("END TEST: %s", __FUNCTION__);
+}
+
+void CondLinkUTest::test_wrapped_exp()
+{
+	logger().debug("BEGIN TEST: %s", __FUNCTION__);
+
+	eval->eval("(load-from-path \"tests/atoms/core/condlink.scm\")");
+
+	Handle result = eval->eval_h("(cog-execute! listwrapped)");
+
+	Handle baz = eval->eval_h("(NumberNode 1)");
+	printf("got %s", result->to_string().c_str());
+	printf("expected %s\n", baz->to_string().c_str());
+
+	TS_ASSERT(result == baz);
+
+	logger().debug("END TEST: %s", __FUNCTION__);
+}
+
+void CondLinkUTest::test_grounded_cond()
+{
+	logger().debug("BEGIN TEST: %s", __FUNCTION__);
+
+	eval->eval("(load-from-path \"tests/atoms/core/condlink.scm\")");
+
+	Handle result = eval->eval_h("(cog-execute! grounded-cond)");
+
+	Handle baz = eval->eval_h("(NumberNode 2)");
+	printf("got %s", result->to_string().c_str());
+	printf("expected %s\n", baz->to_string().c_str());
+
+	TS_ASSERT(result == baz);
+
+	logger().debug("END TEST: %s", __FUNCTION__);
+}
+
+// XXX FIXME Disable this unit test. It uses CondLink with a
+// beguiling but ultimately poor syntax: it tries to assemble
+// boolean trees containing elements that are not actually
+// executable. The idea is pretty: Assemble arbitrary trees
+// of some sort, by indicating variabl regions with "knobs".
+// and then generate the final tree based on knob settings.
+// But, to do this in generality, we probably need to invent
+// an explicit KnobLink, instead of overloading CondLink with
+// this special meaning. So: disable this unit test. It breaks
+// asmoses, but no one is using asmoses, so I don't care. If
+// someone needs as-moses again, well, we will have to invent a
+// KnobLink. Or possibly do the same thing with a FilterLink ???
+// There's always the butt-ugly solution of using QuoteLink...
+void CondLinkUTest::xxxtest_knobs()
+{
+	logger().debug("BEGIN TEST: %s", __FUNCTION__);
+
+	eval->eval("(load-from-path \"tests/atoms/core/condlink.scm\")");
+
+	Handle result = eval->eval_h("(cog-execute! put-00)");
+	result = HandleCast(result->execute(as.get()));
+
+	Handle baz = eval->eval_h("(Not (And (Predicate \"$a\") (Not (Predicate \"$b\"))))");
+	printf("p00 got %s\n", result->to_string().c_str());
+	printf("p00 expected %s\n\n", baz->to_string().c_str());
+
+	TS_ASSERT(result == baz);
+
+	result = eval->eval_h("(cog-execute! put-01)");
+	result = HandleCast(result->execute(as.get()));
+
+	baz = eval->eval_h("(Not (And (Predicate \"$a\") (Predicate \"$b\")))");
+	printf("p01 got %s\n", result->to_string().c_str());
+	printf("p01 expected %s\n\n", baz->to_string().c_str());
+
+	TS_ASSERT(result == baz);
+
+	result = eval->eval_h("(cog-execute! put-10)");
+	result = HandleCast(result->execute(as.get()));
+
+	baz = eval->eval_h("(And (Predicate \"$a\") (Not (Predicate \"$b\")))");
+	printf("p10 got %s\n", result->to_string().c_str());
+	printf("p10 expected %s\n\n", baz->to_string().c_str());
+
+	TS_ASSERT(result == baz);
+
+	result = eval->eval_h("(cog-execute! put-11)");
+	result = HandleCast(result->execute(as.get()));
+
+	baz = eval->eval_h("(And (Predicate \"$a\") (Predicate \"$b\"))");
+	printf("p11 got %s\n", result->to_string().c_str());
+	printf("p11 expected %s\n\n", baz->to_string().c_str());
+
+	TS_ASSERT(result == baz);
+
+	logger().debug("END TEST: %s", __FUNCTION__);
+}
