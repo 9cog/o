@@ -1,55 +1,75 @@
-Examples
---------
-Every running CogServer provides a web page showing the current status
-of the server. This can be viewed by opening port 18080 in a web browser.
-If the CogServer is running on the local machine, then it can be accessed
-as [http://localhost:18080/stats](http://localhost:18080/stats). The status
-page includes a list of the currently loaded modules, and a `top`-like display,
-showing all connected clients, and the network status for each client.
+AtomSpace RocksDB Backend Usage Examples
+----------------------------------------
+Save and restore AtomSpace contents to a RocksDB database. The RocksDB
+database is a single-user, local-host-only file-backed database. That
+means that only one Atomese process can work with it at any given moment.
 
-The [websockets](./websockets) subdirectory contains a web page that
-shows how to interact with a running cogserver.  Just load the
-[demo.html](./websockets/demo.html) page in a browser,
-[***like this***](https://html-preview.github.io/?url=https://github.com/opencog/cogserver/blob/master/examples/websockets/demo.html),
-and go.
-All the actual network i/o is done with the
-[script.js](./websockets/script.js) javascript file. The
-[json-test.html](./websockets/json-test.html) page shows network
-traffic for a basic JSON session.
-[***Run it here***](https://html-preview.github.io/?url=https://github.com/opencog/cogserver/blob/master/examples/websockets/json-test.html).
+In ASCII-art:
 
-The [visualizer](./visualizer) subdirectory contains a web page that
-provides some basic info about the contents of the AtomSpace. This
-includes the total counts for various atom types, and some basic
-browsing ability.
-[***Run it here***](https://html-preview.github.io/?url=https://github.com/opencog/cogserver/blob/master/examples/visualizer/index.html).
-
-The [mcp](./mcp) subdirectory contains a Model Context Protocol (MCP)
-several prompts, originally written for Claude, that explain what the
-AtomSpace is, and how to use it. Claude, or any other LLM capable of
-chatting the MCP protocol can connect to the CogServer at port 18888
-and work directly with the Atoms in the AtomSpace.
-
-The mcp subdirectory also includes some debug and checking tools.
-One of these verifies that the CogServer is responding correctly.
-Two more are network proxies that can be used to escape network
-sandboxes. These are useful when running Claude over TOR or a VPN.
-
-The [python](./python) subdirectory demonstrates how to start the
-cogserver from a python shell, so that the AtomSpace used by the python
-shell is the same one as that used by the cogserver.
-
-The demo for running the cogserver from scheme is almost trivial.
-Just do this:
 ```
-(use-modules (opencog) (opencog cogserver))
-(start-cogserver)
+ +-------------+
+ |   Atomese   |
+ |   Process   |
+ |             |
+ +---- API-----+
+ |             |
+ |   RocksDB   |
+ |    files    |
+ +-------------+
 ```
-That's it. Scheme documentation available from the guile REPL, by
-saying `,describe start-cogserver`.
 
-The [module](./module) subdirectory provides a template for creating
-a custom module. Most developers should NOT be interested in this
-example! If you want to create a new shell, similar to the python,
-scheme or json shells, then look at the code for those, located at
-`opencog/cogserver/shell/` and emulate what you find there.
+RocksDB is a fast, modern and very popular database. It achieves high
+performance through a large variety of techniques; one of these is by
+avoiding the complexity of supporting multiple simultaneous users. This
+single-user constraint carries over to Atomese processes as well. The
+CogServer, and the
+[`atomspace-cog`](https://github/opencog/atomspace-cog) facility can be
+used to get multi-user access. See the wiki pages for
+[StorageNode](https://wiki.opencog.org/w/StorageNode) for more info.
+
+The RocksStorageNode allows you to work with datasets that are too big
+to fit in RAM; it also provides long-term off-line storage.
+
+The basic RocksStorage back-end does not try to guess what your working
+set is; it is up to you to load, work with and save those Atoms that are
+important for you. Some of the
+[ProxyNodes](https://wiki.opencog.org/w/ProxyNode) provide more
+sophisticated storage management. These are layered on top of existing
+StorageNodes, or on top of other ProxyNodes.
+
+
+The goal of the examples here is to show how to use RocksStorage
+directly, to save and restore individual Values, Atoms or entire
+AtomSpaces.
+
+Examples, from basic to sophisticated:
+
+* [fetch-store.scm](fetch-store.scm) -- Basic fetch and store of single atoms
+* [load-dump.scm](load-dump.scm) -- Loading and saving entire AtomSpaces.
+* [storage_tutorial.py](storage_tutorial.py) -- Same topics, in python.
+
+A single AtomSpace can be stored in several different StorageNodes.
+Alternately, multiple AtomSpaces can be stored in a single Storagenode.
+These two cases are explored in the next two demos:
+
+* [multiple-databases.scm](multiple-databases.scm) -- Several at once.
+* [many-spaces.scm](many-spaces.scm)
+
+AtomSpaces can be stacked, one on top another. Each space in the stack
+is called a "frame", and it holds a change-set: all of the Atoms and
+Values that changed from the spaces further down in the stack. This
+stack (actually, a DAG) can be stored and fetched, just as above.
+
+* [space-frames.scm](space-frames.scm) -- A stack of AtomSpace Frames.
+
+The last demo is more curious. It allows queries to be run so that only
+a specific portion of the database is loaded into the AtomSpace. The
+query will run correctly, in that it will behave as if the entire
+AtomSpace had been loaded into RAM. However, it does not actually
+require that everything be loaded; Atoms are fetched from the file-store
+in an as-needed basis.  This is currently a bit experimental; the API
+is subject to change without notice (and there may be bugs?)
+
+* [query-storage.scm](query-storage.scm) -- Run queries out of the database.
+
+------

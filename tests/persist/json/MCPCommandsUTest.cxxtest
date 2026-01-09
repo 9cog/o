@@ -1,0 +1,609 @@
+/*
+ * MCPCommandsUTest.cxxtest
+ * Test MCP-style JSON command processor
+ *
+ * Copyright (c) 2025 Linas Vepstas
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License v3 as
+ * published by the Free Software Foundation and including the exceptions
+ * at http://opencog.org/wiki/Licenses
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program; if not, write to:
+ * Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
+
+#include <opencog/util/Logger.h>
+#include <opencog/atomspace/AtomSpace.h>
+#include <opencog/atoms/value/FloatValue.h>
+#include <opencog/atoms/value/StringValue.h>
+#include <opencog/atoms/base/Node.h>
+#include <opencog/atoms/base/Link.h>
+
+#include "opencog/persist/json/JSCommands.h"
+
+using namespace opencog;
+
+class MCPCommandsUTest : public CxxTest::TestSuite
+{
+private:
+	AtomSpacePtr as;
+
+	// Helper function to extract the text content from MCP response
+	std::string extractMCPContent(const std::string& response) {
+		// MCP format: {"content": [{"type":"text", "text": "..."}]}
+		size_t textPos = response.find("\"text\": \"");
+		if (textPos == std::string::npos) return "";
+
+		textPos += 9; // Skip past "text": "
+
+		// Find the closing quote, handling escaped quotes
+		size_t endPos = textPos;
+		while (endPos < response.size()) {
+			if (response[endPos] == '"' && (endPos == 0 || response[endPos-1] != '\\')) {
+				break;
+			}
+			endPos++;
+		}
+
+		if (endPos >= response.size()) return "";
+
+		// Extract the content and unescape quotes
+		std::string content = response.substr(textPos, endPos - textPos);
+
+		// Simple unescaping of quotes
+		size_t pos = 0;
+		while ((pos = content.find("\\\"", pos)) != std::string::npos) {
+			content.replace(pos, 2, "\"");
+			pos += 1;
+		}
+
+		return content;
+	}
+
+public:
+	MCPCommandsUTest()
+	{
+		logger().set_print_to_stdout_flag(true);
+		as = createAtomSpace();
+	}
+
+	void setUp() { as->clear(); }
+	void tearDown() {}
+
+	// Test type query functions
+	void test_getSubTypes();
+	void test_getSuperTypes();
+	void test_getAtoms();
+
+	// Test atom query functions
+	void test_haveNode();
+	void test_haveLink();
+	void test_haveAtom();
+
+	// Test atom creation functions
+	void test_makeAtom();
+
+	// Test atom property functions
+	void test_getIncoming();
+	void test_getValuesSetValue();
+
+	// Test other functions
+	void test_execute();
+	void test_extract();
+	void test_version();
+};
+
+// Test getSubTypes in MCP format
+void MCPCommandsUTest::test_getSubTypes()
+{
+	logger().info("BEGIN TEST: %s", __FUNCTION__);
+
+	// Test MCP format
+	std::string cmd = R"({ "tool": "getSubTypes", "params": {"type": "Link"}})";
+	std::string result = JSCommands::interpret_command(as.get(), cmd);
+	logger().info("Result for '%s': %s", cmd.c_str(), result.c_str());
+
+	// Should return MCP format with array of Link subtypes
+	TS_ASSERT(result.find("\"content\"") != std::string::npos);
+	TS_ASSERT(result.find("\"type\":\"text\"") != std::string::npos);
+
+	// Extract and check the actual content
+	std::string content = extractMCPContent(result);
+	TS_ASSERT(content.find("OrderedLink") != std::string::npos);
+
+	logger().info("END TEST: %s", __FUNCTION__);
+}
+
+// Test getSuperTypes in MCP format
+void MCPCommandsUTest::test_getSuperTypes()
+{
+	logger().info("BEGIN TEST: %s", __FUNCTION__);
+
+	// Test MCP format
+	std::string cmd = R"({ "tool": "getSuperTypes", "params": {"type": "ListLink"}})";
+	std::string result = JSCommands::interpret_command(as.get(), cmd);
+	logger().info("Result for '%s': %s", cmd.c_str(), result.c_str());
+
+	// Should return success with array containing parent types
+	TS_ASSERT(result.find("\"content\"") != std::string::npos);
+	TS_ASSERT(result.find("\"type\":\"text\"") != std::string::npos);
+	TS_ASSERT(extractMCPContent(result).find("\"OrderedLink\"") != std::string::npos);
+
+	logger().info("END TEST: %s", __FUNCTION__);
+}
+
+// Test getAtoms in MCP format
+void MCPCommandsUTest::test_getAtoms()
+{
+	logger().info("BEGIN TEST: %s", __FUNCTION__);
+
+	// Add some test atoms
+	as->add_node(CONCEPT_NODE, "test1");
+	as->add_node(CONCEPT_NODE, "test2");
+	as->add_node(PREDICATE_NODE, "pred1");
+
+	// Test MCP format - without subclass
+	std::string cmd = R"({ "tool": "getAtoms", "params": {"type": "ConceptNode"}})";
+	std::string result = JSCommands::interpret_command(as.get(), cmd);
+	logger().info("Result for '%s': %s", cmd.c_str(), result.c_str());
+
+	// Should return success with array of concept nodes
+	TS_ASSERT(result.find("\"content\"") != std::string::npos);
+	TS_ASSERT(result.find("\"type\":\"text\"") != std::string::npos);
+	TS_ASSERT(extractMCPContent(result).find("\"test1\"") != std::string::npos);
+	TS_ASSERT(extractMCPContent(result).find("\"test2\"") != std::string::npos);
+	TS_ASSERT(result.find("\"pred1\"") == std::string::npos);
+
+	// Test MCP format - getAtoms("Node") without subclass - should be empty
+	cmd = R"({ "tool": "getAtoms", "params": {"type": "Node"}})";
+	result = JSCommands::interpret_command(as.get(), cmd);
+	logger().info("Result for getAtoms Node (no subclass): %s", result.c_str());
+	TS_ASSERT(result.find("\"content\"") != std::string::npos);
+	TS_ASSERT(extractMCPContent(result).find("(list") == 0);
+	// Should be empty - no direct Node instances
+	TS_ASSERT(result.find("\"test1\"") == std::string::npos);
+
+	// Test MCP format - getAtoms("Node") with subclass - should include all nodes
+	cmd = R"({ "tool": "getAtoms", "params": {"type": "Node", "subclass": true}})";
+	result = JSCommands::interpret_command(as.get(), cmd);
+	logger().info("Result for getAtoms Node (with subclass): %s", result.c_str());
+	TS_ASSERT(result.find("\"content\"") != std::string::npos);
+	TS_ASSERT(result.find("\"type\":\"text\"") != std::string::npos);
+	TS_ASSERT(extractMCPContent(result).find("\"test1\"") != std::string::npos);
+	TS_ASSERT(extractMCPContent(result).find("\"test2\"") != std::string::npos);
+	TS_ASSERT(extractMCPContent(result).find("\"pred1\"") != std::string::npos);
+
+	logger().info("END TEST: %s", __FUNCTION__);
+}
+
+// Test haveNode in MCP format
+void MCPCommandsUTest::test_haveNode()
+{
+	logger().info("BEGIN TEST: %s", __FUNCTION__);
+
+	// Test when node doesn't exist
+	std::string cmd = R"({ "tool": "haveNode", "params": {"type": "ConceptNode", "name": "foo"}})";
+	std::string result = JSCommands::interpret_command(as.get(), cmd);
+	logger().info("Result for '%s': %s", cmd.c_str(), result.c_str());
+	TS_ASSERT(result.find("\"content\"") != std::string::npos);
+	TS_ASSERT(extractMCPContent(result) == "false");
+
+	// Add the node using makeAtom
+	cmd = R"({ "tool": "makeAtom", "params": {"type": "ConceptNode", "name": "foo"}})";
+	result = JSCommands::interpret_command(as.get(), cmd);
+	logger().info("Result for makeAtom: %s", result.c_str());
+	TS_ASSERT(result.find("\"content\"") != std::string::npos);
+	TS_ASSERT(extractMCPContent(result) == "true");
+
+	// Test when node exists
+	cmd = R"({ "tool": "haveNode", "params": {"type": "ConceptNode", "name": "foo"}})";
+	result = JSCommands::interpret_command(as.get(), cmd);
+	logger().info("Result for '%s': %s", cmd.c_str(), result.c_str());
+	TS_ASSERT(result.find("\"content\"") != std::string::npos);
+	TS_ASSERT(extractMCPContent(result) == "true");
+
+	logger().info("END TEST: %s", __FUNCTION__);
+}
+
+// Test haveLink in MCP format
+void MCPCommandsUTest::test_haveLink()
+{
+	logger().info("BEGIN TEST: %s", __FUNCTION__);
+
+	// Add test nodes using makeAtom
+	std::string cmd = R"({ "tool": "makeAtom", "params": {"type": "ConceptNode", "name": "foo"}})";
+	std::string result = JSCommands::interpret_command(as.get(), cmd);
+	TS_ASSERT(result.find("\"content\"") != std::string::npos);
+
+	cmd = R"({ "tool": "makeAtom", "params": {"type": "ConceptNode", "name": "bar"}})";
+	result = JSCommands::interpret_command(as.get(), cmd);
+	TS_ASSERT(result.find("\"content\"") != std::string::npos);
+
+	// Test when link doesn't exist
+	cmd = R"({ "tool": "haveLink", "params": {"type": "ListLink", "outgoing": [{"type": "ConceptNode", "name": "foo"}, {"type": "ConceptNode", "name": "bar"}]}})";
+	result = JSCommands::interpret_command(as.get(), cmd);
+	logger().info("Result for '%s': %s", cmd.c_str(), result.c_str());
+	TS_ASSERT(result.find("\"content\"") != std::string::npos);
+	TS_ASSERT(extractMCPContent(result) == "false");
+
+	// Add the link using makeAtom
+	cmd = R"({ "tool": "makeAtom", "params": {"type": "ListLink", "outgoing": [{"type": "ConceptNode", "name": "foo"}, {"type": "ConceptNode", "name": "bar"}]}})";
+	result = JSCommands::interpret_command(as.get(), cmd);
+	logger().info("Result for makeAtom link: %s", result.c_str());
+	TS_ASSERT(result.find("\"content\"") != std::string::npos);
+	TS_ASSERT(extractMCPContent(result) == "true");
+
+	// Test when link exists
+	cmd = R"({ "tool": "haveLink", "params": {"type": "ListLink", "outgoing": [{"type": "ConceptNode", "name": "foo"}, {"type": "ConceptNode", "name": "bar"}]}})";
+	result = JSCommands::interpret_command(as.get(), cmd);
+	logger().info("Result for '%s': %s", cmd.c_str(), result.c_str());
+	TS_ASSERT(result.find("\"content\"") != std::string::npos);
+	TS_ASSERT(extractMCPContent(result) == "true");
+
+	logger().info("END TEST: %s", __FUNCTION__);
+}
+
+// Test haveAtom in MCP format
+void MCPCommandsUTest::test_haveAtom()
+{
+	logger().info("BEGIN TEST: %s", __FUNCTION__);
+
+	// Test when atom doesn't exist
+	std::string cmd = R"({ "tool": "haveAtom", "params": {"type": "ConceptNode", "name": "test"}})";
+	std::string result = JSCommands::interpret_command(as.get(), cmd);
+	logger().info("Result for '%s': %s", cmd.c_str(), result.c_str());
+	TS_ASSERT(result.find("\"content\"") != std::string::npos);
+	TS_ASSERT(extractMCPContent(result) == "false");
+
+	// Add the atom using makeAtom
+	cmd = R"({ "tool": "makeAtom", "params": {"type": "ConceptNode", "name": "test"}})";
+	result = JSCommands::interpret_command(as.get(), cmd);
+	TS_ASSERT(result.find("\"content\"") != std::string::npos);
+	TS_ASSERT(extractMCPContent(result) == "true");
+
+	// Test when atom exists
+	cmd = R"({ "tool": "haveAtom", "params": {"type": "ConceptNode", "name": "test"}})";
+	result = JSCommands::interpret_command(as.get(), cmd);
+	logger().info("Result for '%s': %s", cmd.c_str(), result.c_str());
+	TS_ASSERT(result.find("\"content\"") != std::string::npos);
+	TS_ASSERT(extractMCPContent(result) == "true");
+
+	logger().info("END TEST: %s", __FUNCTION__);
+}
+
+// Test makeAtom in MCP format
+void MCPCommandsUTest::test_makeAtom()
+{
+	logger().info("BEGIN TEST: %s", __FUNCTION__);
+
+	// Test creating a node
+	std::string cmd = R"({ "tool": "makeAtom", "params": {"type": "ConceptNode", "name": "created"}})";
+	std::string result = JSCommands::interpret_command(as.get(), cmd);
+	logger().info("Result for '%s': %s", cmd.c_str(), result.c_str());
+	TS_ASSERT(result.find("\"content\"") != std::string::npos);
+	TS_ASSERT(extractMCPContent(result) == "true");
+
+	// Verify node was created using haveNode
+	cmd = R"({ "tool": "haveNode", "params": {"type": "ConceptNode", "name": "created"}})";
+	result = JSCommands::interpret_command(as.get(), cmd);
+	TS_ASSERT(result.find("\"content\"") != std::string::npos);
+	TS_ASSERT(extractMCPContent(result) == "true");
+
+	// Test creating a link
+	cmd = R"({ "tool": "makeAtom", "params": {"type": "ListLink", "outgoing": [{"type": "ConceptNode", "name": "created"}, {"type": "ConceptNode", "name": "another"}]}})";
+	result = JSCommands::interpret_command(as.get(), cmd);
+	logger().info("Result for '%s': %s", cmd.c_str(), result.c_str());
+	TS_ASSERT(result.find("\"content\"") != std::string::npos);
+	TS_ASSERT(extractMCPContent(result) == "true");
+
+	// Verify link was created using haveLink
+	cmd = R"({ "tool": "haveLink", "params": {"type": "ListLink", "outgoing": [{"type": "ConceptNode", "name": "created"}, {"type": "ConceptNode", "name": "another"}]}})";
+	result = JSCommands::interpret_command(as.get(), cmd);
+	TS_ASSERT(result.find("\"content\"") != std::string::npos);
+	TS_ASSERT(extractMCPContent(result) == "true");
+
+	// Test the specific fix: create an atom with makeAtom and verify it has the correct name
+	logger().info("Testing makeAtom name preservation fix...");
+
+	// Create a ConceptNode with a specific name using short type name
+	cmd = R"({ "tool": "makeAtom", "params": {"type": "Concept", "name": "foo"}})";
+	result = JSCommands::interpret_command(as.get(), cmd);
+	logger().info("Result for makeAtom with name 'foo': %s", result.c_str());
+	TS_ASSERT(result.find("\"content\"") != std::string::npos);
+	TS_ASSERT(extractMCPContent(result) == "true");
+
+	// Verify the atom can be found using getAtoms and has the correct name
+	cmd = R"({ "tool": "getAtoms", "params": {"type": "Concept"}})";
+	result = JSCommands::interpret_command(as.get(), cmd);
+	logger().info("Result for getAtoms: %s", result.c_str());
+	TS_ASSERT(result.find("\"content\"") != std::string::npos);
+	TS_ASSERT(extractMCPContent(result).find("(ConceptNode \"foo\")") != std::string::npos);
+
+	// Also verify with haveNode
+	cmd = R"({ "tool": "haveNode", "params": {"type": "Concept", "name": "foo"}})";
+	result = JSCommands::interpret_command(as.get(), cmd);
+	logger().info("Result for haveNode 'foo': %s", result.c_str());
+	TS_ASSERT(result.find("\"content\"") != std::string::npos);
+	TS_ASSERT(extractMCPContent(result) == "true");
+
+	// Test with a more complex name
+	cmd = R"({ "tool": "makeAtom", "params": {"type": "Concept", "name": "test with spaces"}})";
+	result = JSCommands::interpret_command(as.get(), cmd);
+	logger().info("Result for makeAtom with complex name: %s", result.c_str());
+	TS_ASSERT(result.find("\"content\"") != std::string::npos);
+	TS_ASSERT(extractMCPContent(result) == "true");
+
+	// Verify the complex name is preserved
+	cmd = R"({ "tool": "haveNode", "params": {"type": "Concept", "name": "test with spaces"}})";
+	result = JSCommands::interpret_command(as.get(), cmd);
+	TS_ASSERT(result.find("\"content\"") != std::string::npos);
+	TS_ASSERT(extractMCPContent(result) == "true");
+
+	// Test with PredicateNode to ensure fix works for all node types
+	cmd = R"({ "tool": "makeAtom", "params": {"type": "PredicateNode", "name": "test_predicate"}})";
+	result = JSCommands::interpret_command(as.get(), cmd);
+	logger().info("Result for makeAtom PredicateNode: %s", result.c_str());
+	TS_ASSERT(result.find("\"content\"") != std::string::npos);
+	TS_ASSERT(extractMCPContent(result) == "true");
+
+	// Verify PredicateNode has correct name
+	cmd = R"({ "tool": "getAtoms", "params": {"type": "PredicateNode"}})";
+	result = JSCommands::interpret_command(as.get(), cmd);
+	logger().info("Result for getAtoms PredicateNode: %s", result.c_str());
+	TS_ASSERT(result.find("\"content\"") != std::string::npos);
+	TS_ASSERT(extractMCPContent(result).find("(PredicateNode \"test_predicate\")") != std::string::npos);
+
+	// Test parameter order independence for nodes (name before type)
+	logger().info("Testing parameter order independence...");
+
+	// Test node with name before type
+	cmd = R"({ "tool": "makeAtom", "params": {"name": "reversed_params", "type": "ConceptNode"}})";
+	result = JSCommands::interpret_command(as.get(), cmd);
+	logger().info("Result for makeAtom with reversed params: %s", result.c_str());
+	TS_ASSERT(result.find("\"content\"") != std::string::npos);
+	TS_ASSERT(extractMCPContent(result) == "true");
+
+	// Verify it was created correctly
+	cmd = R"({ "tool": "haveNode", "params": {"type": "ConceptNode", "name": "reversed_params"}})";
+	result = JSCommands::interpret_command(as.get(), cmd);
+	TS_ASSERT(result.find("\"content\"") != std::string::npos);
+	TS_ASSERT(extractMCPContent(result) == "true");
+
+	// Test EdgeLink with outgoing before type (the failing case from the user)
+	cmd = R"({ "tool": "makeAtom", "params": {"outgoing": [{"type": "Concept", "name": "start"}, {"type": "Concept", "name": "finish"}], "type": "EdgeLink"}})";
+	result = JSCommands::interpret_command(as.get(), cmd);
+	logger().info("Result for EdgeLink with outgoing before type: %s", result.c_str());
+	TS_ASSERT(result.find("\"content\"") != std::string::npos);
+	TS_ASSERT(extractMCPContent(result) == "true");
+
+	// Verify the EdgeLink was created correctly
+	cmd = R"({ "tool": "haveLink", "params": {"type": "EdgeLink", "outgoing": [{"type": "Concept", "name": "start"}, {"type": "Concept", "name": "finish"}]}})";
+	result = JSCommands::interpret_command(as.get(), cmd);
+	TS_ASSERT(result.find("\"content\"") != std::string::npos);
+	TS_ASSERT(extractMCPContent(result) == "true");
+
+	// Test another link type with reversed params
+	cmd = R"({ "tool": "makeAtom", "params": {"outgoing": [{"type": "ConceptNode", "name": "first"}, {"type": "ConceptNode", "name": "second"}], "type": "ListLink"}})";
+	result = JSCommands::interpret_command(as.get(), cmd);
+	logger().info("Result for ListLink with outgoing before type: %s", result.c_str());
+	TS_ASSERT(result.find("\"content\"") != std::string::npos);
+	TS_ASSERT(extractMCPContent(result) == "true");
+
+	logger().info("END TEST: %s", __FUNCTION__);
+}
+
+// Test getIncoming in MCP format
+void MCPCommandsUTest::test_getIncoming()
+{
+	logger().info("BEGIN TEST: %s", __FUNCTION__);
+
+	// Create nodes and links using MCP commands
+	std::string cmd = R"({ "tool": "makeAtom", "params": {"type": "ConceptNode", "name": "target"}})";
+	std::string result = JSCommands::interpret_command(as.get(), cmd);
+	TS_ASSERT(result.find("\"content\"") != std::string::npos);
+
+	cmd = R"({ "tool": "makeAtom", "params": {"type": "ConceptNode", "name": "other"}})";
+	result = JSCommands::interpret_command(as.get(), cmd);
+	TS_ASSERT(result.find("\"content\"") != std::string::npos);
+
+	cmd = R"({ "tool": "makeAtom", "params": {"type": "ListLink", "outgoing": [{"type": "ConceptNode", "name": "target"}, {"type": "ConceptNode", "name": "other"}]}})";
+	result = JSCommands::interpret_command(as.get(), cmd);
+	TS_ASSERT(result.find("\"content\"") != std::string::npos);
+
+	cmd = R"({ "tool": "makeAtom", "params": {"type": "ListLink", "outgoing": [{"type": "ConceptNode", "name": "other"}, {"type": "ConceptNode", "name": "target"}]}})";
+	result = JSCommands::interpret_command(as.get(), cmd);
+	TS_ASSERT(result.find("\"content\"") != std::string::npos);
+
+	cmd = R"({ "tool": "makeAtom", "params": {"type": "EvaluationLink", "outgoing": [{"type": "ConceptNode", "name": "target"}, {"type": "ConceptNode", "name": "other"}]}})";
+	result = JSCommands::interpret_command(as.get(), cmd);
+	TS_ASSERT(result.find("\"content\"") != std::string::npos);
+
+	// Test getting all incoming
+	cmd = R"({ "tool": "getIncoming", "params": {"type": "ConceptNode", "name": "target"}})";
+	result = JSCommands::interpret_command(as.get(), cmd);
+	logger().info("Result for '%s': %s", cmd.c_str(), result.c_str());
+
+	// Should return success with array of 3 links
+	TS_ASSERT(result.find("\"content\"") != std::string::npos);
+	TS_ASSERT(result.find("\"type\":\"text\"") != std::string::npos);
+	TS_ASSERT(result.find("ListLink") != std::string::npos);
+	TS_ASSERT(result.find("EvaluationLink") != std::string::npos);
+
+	logger().info("END TEST: %s", __FUNCTION__);
+}
+
+// Test getValues and setValue in MCP format
+void MCPCommandsUTest::test_getValuesSetValue()
+{
+	logger().info("BEGIN TEST: %s", __FUNCTION__);
+
+	// Create atoms
+	Handle h = as->add_node(CONCEPT_NODE, "valuetest");
+	Handle key = as->add_node(PREDICATE_NODE, "mykey");
+
+	// Set a value
+	std::string cmd = R"({ "tool": "setValue", "params": {"type": "ConceptNode", "name": "valuetest", "key": {"type": "PredicateNode", "name": "mykey"}, "value": {"type": "FloatValue", "value": [1.1, 2.2, 3.3]}}})";
+	std::string result = JSCommands::interpret_command(as.get(), cmd);
+	logger().info("Result for '%s': %s", cmd.c_str(), result.c_str());
+	TS_ASSERT(result.find("\"content\"") != std::string::npos);
+	TS_ASSERT(extractMCPContent(result) == "true");
+
+	// Get values
+	cmd = R"({ "tool": "getValues", "params": {"type": "ConceptNode", "name": "valuetest"}})";
+	result = JSCommands::interpret_command(as.get(), cmd);
+	logger().info("Result for '%s': %s", cmd.c_str(), result.c_str());
+
+	// Should return success with values
+	TS_ASSERT(result.find("\"content\"") != std::string::npos);
+	// Note: getValues doesn't use the new return format, it returns the values directly
+	// We need to check for the actual content returned
+	TS_ASSERT(result.find("mykey") != std::string::npos);
+	TS_ASSERT(result.find("FloatValue") != std::string::npos);
+
+	// Test the specific setValue command with mixed field order
+	logger().info("Testing setValue with mixed field order (key before name/type)...");
+
+	// Clear atomspace for a clean test
+	as->clear();
+
+	// Test the exact command format requested
+	cmd = R"({"tool":"setValue","params":{"key":{"type":"Predicate","name":"fovs"},"name":"fimble","type":"Concept","value":{"type":"FloatValue","value":[1,2,3,0.4,0.5,-0.6,0.777,88,999]}}})";
+	result = JSCommands::interpret_command(as.get(), cmd);
+	logger().info("Result for setValue with mixed fields: %s", result.c_str());
+	TS_ASSERT(result.find("\"content\"") != std::string::npos);
+	TS_ASSERT(extractMCPContent(result) == "true");
+
+	// Verify the atom was created with the correct name
+	Handle fimble = as->get_node(CONCEPT_NODE, "fimble");
+	TS_ASSERT(fimble != nullptr);
+	TS_ASSERT(fimble->get_name() == "fimble");
+
+	// Verify the key was created
+	Handle fovs = as->get_node(PREDICATE_NODE, "fovs");
+	TS_ASSERT(fovs != nullptr);
+	TS_ASSERT(fovs->get_name() == "fovs");
+
+	// Verify the value was set correctly
+	ValuePtr v = fimble->getValue(fovs);
+	TS_ASSERT(v != nullptr);
+
+	// Check that it's a FloatValue
+	FloatValuePtr fv = FloatValueCast(v);
+	TS_ASSERT(fv != nullptr);
+
+	// Verify the values
+	std::vector<double> expected = {1, 2, 3, 0.4, 0.5, -0.6, 0.777, 88, 999};
+	TS_ASSERT_EQUALS(fv->size(), expected.size());
+
+	for (size_t i = 0; i < expected.size(); i++) {
+		TS_ASSERT_DELTA(fv->value()[i], expected[i], 0.001);
+	}
+
+	// Also verify using getValues command
+	cmd = R"({ "tool": "getValues", "params": {"type": "Concept", "name": "fimble"}})";
+	result = JSCommands::interpret_command(as.get(), cmd);
+	logger().info("Result for getValues on fimble: %s", result.c_str());
+
+	// Should contain the key and values
+	TS_ASSERT(result.find("fovs") != std::string::npos);
+	TS_ASSERT(result.find("FloatValue") != std::string::npos);
+	TS_ASSERT(result.find("1") != std::string::npos);
+	TS_ASSERT(result.find("0.4") != std::string::npos);
+	TS_ASSERT(result.find("0.777") != std::string::npos);
+	TS_ASSERT(result.find("88") != std::string::npos);
+	TS_ASSERT(result.find("999") != std::string::npos);
+
+	logger().info("END TEST: %s", __FUNCTION__);
+}
+
+// Test execute in MCP format
+void MCPCommandsUTest::test_execute()
+{
+	logger().info("BEGIN TEST: %s", __FUNCTION__);
+
+	// Create executable atoms using makeAtom
+	std::string cmd = R"({ "tool": "makeAtom", "params": {"type": "NumberNode", "name": "2"}})";
+	std::string result = JSCommands::interpret_command(as.get(), cmd);
+	TS_ASSERT(result.find("\"content\"") != std::string::npos);
+
+	cmd = R"({ "tool": "makeAtom", "params": {"type": "NumberNode", "name": "3"}})";
+	result = JSCommands::interpret_command(as.get(), cmd);
+	TS_ASSERT(result.find("\"content\"") != std::string::npos);
+
+	cmd = R"({ "tool": "makeAtom", "params": {"type": "PlusLink", "outgoing": [{"type": "NumberNode", "name": "2"}, {"type": "NumberNode", "name": "3"}]}})";
+	result = JSCommands::interpret_command(as.get(), cmd);
+	TS_ASSERT(result.find("\"content\"") != std::string::npos);
+
+	// Execute via command
+	cmd = R"({ "tool": "execute", "params": {"type": "PlusLink", "outgoing": [{"type": "NumberNode", "name": "2"}, {"type": "NumberNode", "name": "3"}]}})";
+	result = JSCommands::interpret_command(as.get(), cmd);
+	logger().info("Result for '%s': %s", cmd.c_str(), result.c_str());
+
+	// Should return success with execution result
+	TS_ASSERT(result.find("\"content\"") != std::string::npos);
+	TS_ASSERT(result.find("\"type\":\"text\"") != std::string::npos);
+	TS_ASSERT(result.find("NumberNode") != std::string::npos);
+	// Note: The result NumberNode may have empty name, not "5"
+
+	logger().info("END TEST: %s", __FUNCTION__);
+}
+
+// Test extract in MCP format
+void MCPCommandsUTest::test_extract()
+{
+	logger().info("BEGIN TEST: %s", __FUNCTION__);
+
+	// Create some atoms using makeAtom
+	std::string cmd = R"({ "tool": "makeAtom", "params": {"type": "ConceptNode", "name": "extract1"}})";
+	std::string result = JSCommands::interpret_command(as.get(), cmd);
+	TS_ASSERT(result.find("\"content\"") != std::string::npos);
+
+	cmd = R"({ "tool": "makeAtom", "params": {"type": "ConceptNode", "name": "extract2"}})";
+	result = JSCommands::interpret_command(as.get(), cmd);
+	TS_ASSERT(result.find("\"content\"") != std::string::npos);
+
+	cmd = R"({ "tool": "makeAtom", "params": {"type": "ListLink", "outgoing": [{"type": "ConceptNode", "name": "extract1"}, {"type": "ConceptNode", "name": "extract2"}]}})";
+	result = JSCommands::interpret_command(as.get(), cmd);
+	TS_ASSERT(result.find("\"content\"") != std::string::npos);
+
+	// Try to extract non-recursively (should succeed if no incoming links)
+	// Note: The extract command in MCP mode doesn't support the recursive parameter
+	// so it defaults to non-recursive extraction
+	cmd = R"({ "tool": "extract", "params": {"type": "ConceptNode", "name": "extract2"}})";
+	result = JSCommands::interpret_command(as.get(), cmd);
+	logger().info("Result for '%s': %s", cmd.c_str(), result.c_str());
+	TS_ASSERT(result.find("\"content\"") != std::string::npos);
+	// Should succeed if extract2 has no incoming links
+
+	// Verify extraction by checking if node still exists
+	cmd = R"({ "tool": "haveNode", "params": {"type": "ConceptNode", "name": "extract2"}})";
+	result = JSCommands::interpret_command(as.get(), cmd);
+	logger().info("haveNode result: %s", result.c_str());
+
+	logger().info("END TEST: %s", __FUNCTION__);
+}
+
+// Test version in MCP format
+void MCPCommandsUTest::test_version()
+{
+	logger().info("BEGIN TEST: %s", __FUNCTION__);
+
+	std::string cmd = R"({ "tool": "version", "params": {}})";
+	std::string result = JSCommands::interpret_command(as.get(), cmd);
+	logger().info("Result for '%s': %s", cmd.c_str(), result.c_str());
+
+	// Should return success with version string
+	TS_ASSERT(result.find("\"content\"") != std::string::npos);
+	TS_ASSERT(result.find("\"type\":\"text\"") != std::string::npos);
+
+	logger().info("END TEST: %s", __FUNCTION__);
+}

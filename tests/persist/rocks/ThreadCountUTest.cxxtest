@@ -1,0 +1,394 @@
+/*
+ * tests/persist/rocks/ThreadCountUTest.cxxtest
+ *
+ * Verify that racing Value increments on Atoms still end up with the
+ * correct final count.
+ *
+ * Copyright (C) 2008, 2009, 2019, 2021, 2023 Linas Vepstas <linasvepstas@gmail.com>
+ *
+ * LICENSE:
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License v3 as
+ * published by the Free Software Foundation and including the exceptions
+ * at http://opencog.org/wiki/Licenses
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program; if not, write to:
+ * Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
+#include <atomic>
+#include <cstdio>
+#include <filesystem>
+#include <random>
+#include <string>
+
+#include <opencog/atoms/base/Atom.h>
+#include <opencog/atoms/value/FloatValue.h>
+#include <opencog/atomspace/AtomSpace.h>
+#include <opencog/guile/SchemeEval.h>
+
+#include <opencog/persist/api/StorageNode.h>
+#include <opencog/persist/rocks-types/atom_types.h>
+
+#include <opencog/util/Logger.h>
+
+using namespace opencog;
+
+class ThreadCountUTest :  public CxxTest::TestSuite
+{
+	private:
+		std::string uri;
+		AtomSpacePtr as;
+		SchemeEval* eval;
+		int n_threads;
+
+		// Per-thread increment counters for debugging
+		static constexpr int MAX_THREADS = 32;
+		std::atomic<size_t> thread_increment_count[MAX_THREADS];
+
+	public:
+
+		ThreadCountUTest(void)
+		{
+			logger().set_level(Logger::INFO);
+			// logger().set_level(Logger::DEBUG);
+			logger().set_print_to_stdout_flag(true);
+
+			uri = "rocks:///tmp/cog-rocks-thread-count";
+		}
+
+		~ThreadCountUTest()
+		{
+			// erase the log file if no assertions failed
+			if (!CxxTest::TestTracker::tracker().suiteFailed())
+			{
+				std::remove(logger().get_filename().c_str());
+				// Also remove the database directory
+				// URI is "rocks:///tmp/..." so path starts at position 8
+				std::string dbpath = uri.substr(8);
+				std::filesystem::remove_all(dbpath);
+			}
+		}
+
+		void setUp(void);
+		void tearDown(void);
+
+		void worker(int, int, const char*);
+		void harness(int, const char*);
+		void check(size_t, const char*);
+
+		void test_tv_incr(void);
+		void test_push_pop(void);
+		void test_fetch(void);
+};
+
+/*
+ * This is called once before each test, for each test (!!)
+ */
+void ThreadCountUTest::setUp(void)
+{
+	// Configuration. Number of actual running threads may be less,
+	// depending on the CPU architecture.
+	n_threads = 10;
+
+	as = createAtomSpace();
+	eval = SchemeEval::get_scheme_evaluator(as);
+	eval->eval("(add-to-load-path \"" PROJECT_SOURCE_DIR "\")");
+	eval->eval("(load-from-path \"tests/persist/rocks/thread-count.scm\")");
+}
+
+void ThreadCountUTest::tearDown(void)
+{
+}
+
+// ============================================================
+
+// Increment counts on a collection of Atoms.
+void ThreadCountUTest::worker(int thread_id, int nloops, const char *cmd)
+{
+	SchemeEval* tev = SchemeEval::get_scheme_evaluator(as);
+
+	int error_count = 0;
+	size_t local_increment_count = 0;
+	for (int i=0; i<nloops; i++)
+	{
+		char a = (std::rand() % 26) + 'A';
+		char b = (std::rand() % 26) + 'A';
+
+		// Create string `(cmd "foo-XXX" "foo-YYY")`
+		std::string obs = "(";
+		obs += cmd;
+		obs += " \"foo-";
+		obs += a;
+		obs += a;
+		obs += a;
+		obs += "\" \"foo-";
+		obs += b;
+		obs += b;
+		obs += b;
+		obs += "\")";
+		tev->eval(obs);
+		if (tev->eval_error())
+		{
+			error_count++;
+			printf("Thread %d iteration %d: EVAL ERROR\n", thread_id, i);
+		}
+		else
+		{
+			local_increment_count++;
+		}
+	}
+	thread_increment_count[thread_id].store(local_increment_count);
+
+	if (error_count > 0)
+		printf("Thread %d had %d evaluation errors!\n", thread_id, error_count);
+	TS_ASSERT_EQUALS(0, error_count);
+}
+
+// ============================================================
+
+void ThreadCountUTest::check(size_t expected, const char* cmd)
+{
+	Handle key = eval->eval_h("(Predicate \"kayfabe\")");
+	size_t totcnt = 0;
+	size_t edge_count = 0;
+	HandleSeq edges;
+	as->get_root_set_by_type(edges, EDGE_LINK);
+	for (const Handle& e : edges)
+	{
+		edge_count++;
+		ValuePtr tvp = e->getValue(key);
+		FloatValuePtr fv = FloatValueCast(tvp);
+		if (fv) totcnt += fv->value()[2];
+		// printf("Got %s\n", e->to_string().c_str());
+	}
+
+	printf("Observed total count of %lu across %lu edges for %s\n",
+	       totcnt, edge_count, cmd);
+
+	if (totcnt != expected)
+	{
+		printf("ERROR: Expected %lu but got %lu (diff=%ld)\n",
+		       expected, totcnt, (long)(expected - totcnt));
+	}
+	TS_ASSERT_EQUALS(totcnt, expected);
+}
+
+// ============================================================
+
+void ThreadCountUTest::harness(int n_loops, const char* cmd)
+{
+	// Open the storage node.
+	eval->eval("(open-sto)");
+
+	Handle hsn = eval->eval_h("(cog-storage-node)");
+	StorageNodePtr store = StorageNodeCast(hsn);
+
+	TS_ASSERT(store->connected())
+
+	// Clear out left-over junk, just in case.
+	store->erase();
+
+	// Initialize per-thread counters
+	for (int i=0; i < MAX_THREADS; i++)
+		thread_increment_count[i].store(0);
+
+	printf("Start creating %d threads for %s\n", n_threads, cmd);
+	std::vector<std::thread> thread_pool;
+	for (int i=0; i < n_threads; i++) {
+		thread_pool.push_back(
+			std::thread(&ThreadCountUTest::worker, this, i, n_loops, cmd));
+	}
+
+	for (std::thread& t : thread_pool) t.join();
+	store->barrier();
+	printf("Done joining threads for %s\n", cmd);
+
+	size_t thread_total = 0;
+	printf("Per-thread increment counts for %s:\n", cmd);
+	for (int i=0; i < n_threads; i++) {
+		size_t cnt = thread_increment_count[i].load();
+		thread_total += cnt;
+		printf("  Thread %d: %lu increments\n", i, cnt);
+	}
+	printf("Total increments reported by threads: %lu (expected %d) for %s\n",
+	       thread_total, n_threads * n_loops, cmd);
+
+	printf("Final atomspace size=%lu\n", as->get_size());
+	// Verify the atomspace size
+	// TS_ASSERT_EQUALS(as->get_size(), 2);
+
+	std::string stats = eval->eval("(gc-stats)");
+	printf("GC Stats = %s\n", stats.c_str());
+
+	check(n_threads * n_loops, cmd);
+
+	eval->eval("(close-sto)");
+	as->clear();
+
+	// ----------------------------------------------
+	// Reload from storage. Verify that counts are es expected.
+
+	as = createAtomSpace();
+
+	hsn = as->add_node(ROCKS_STORAGE_NODE, std::string(uri));
+	store = StorageNodeCast(hsn);
+
+	store->open();
+	TS_ASSERT(store->connected())
+
+	store->load_atomspace();
+
+	std::string relo = cmd;
+	relo += " reloaded";
+	check(n_threads * n_loops, relo.c_str());
+
+	store->erase();
+	store->close();
+	store = nullptr;
+}
+
+// ============================================================
+
+// Warning: this test is badly designed, and can occasionally fail.
+// I am seeing failure rates of about one in a hundred. The unit test
+// has a built-in race condition: the increment of counts is not atomic
+// with the store of counts. It is quite easy to understand; itt goes
+// like this:
+//
+//     RocksStorage::storeValue(h, key) {
+//         ValuePtr vp = h->getValue(key);  // Get current value.
+//         storeValue(vp);                  // Store what we got.
+//      }
+//
+// The race:
+//     Thread A: enter storeValue(), capture count N from getValue()
+//     Thread B: increment to (N+1), enter storeValue(), capture (N+1)
+//               from getValue(), store (N+1)
+//     Thread A: store what was captured, which was N.
+//
+// The result: AtomSpace contains correct counts, so the first check()
+// passes. However, the Rocks DB has stale counts, and so the "reloaded"
+// check fails.
+//
+// This could be fixed, by fixing the unit test: grab a lock, increment,
+// store, then release lock. But since this failure happens only rarely,
+// I leave this unit test in it's current broken state.
+//
+// If you are reading this: sorry; think of this as the result of my
+// twisted sense of humour: I played a practical joke on you by implying
+// that this is a valid test, when it isn't, really. I had fun writing
+// this. Hope you had fun reading it.
+//
+void ThreadCountUTest::test_tv_incr(void)
+{
+	logger().info("BEGIN TEST: %s", __FUNCTION__);
+
+	// Number of loops inside each thread.
+	int n_loops = 25000;
+
+	harness(n_loops, "observe");
+	logger().info("END TEST: %s", __FUNCTION__);
+}
+
+// ============================================================
+
+// Warning: this test is badly designed, and can occasionally
+// fail. I am seeing failure rates of about one in a hundred.
+// The issue is that the "pushy" method is inherently racey.
+// This issue is this: Multiple threads call push on a common
+// base space, then add an atom in that space. If the base space
+// does not yet contain that atom, it does get created in the top
+// space. These threads drop back to the base space, and increment
+// start to increment counts there. If the atom is not yet in the
+// base space, it will get copied there from the upper space.
+// That's all fine, so far.
+//
+// However, during racing, the outgoing set of a link might get
+// created in the upper space. Meanwhile, other threads have
+// already created that link in the base space, and incremented
+// counts on it. The AtomSpace::add() function finds the link in
+// the base space, and copies the counts into the upper space.
+// So that's the first race, and it places counts in the upper
+// space, where they are not expected (naively). Explicitly:
+//
+//    Thread A: outset not found in base; outset created in upper.
+//    Thread B: link created in lower, count incremented.
+//    Thread A: finds link in lower, but since the outset is
+//              in upper already, the assumption is that this will
+//              be a covering link, i.e. it must be created in the
+//              upper space, and, since its a cover, the counts are
+//              copied from lower to upper.
+//
+// This may come as a surprise, since counts are never incremented
+// in the upper space, yet they still appear there.  This is "user
+// error"; there's nothing the AtomSpace can really do to avoid this.
+// There's no practical way to second guess what the "true intent" of
+// thread A might have been.
+//
+// But we are not done yet. Thread A now drops to the base space, and
+// goes to increment counts in the link that it is holding (which is
+// in the upper space.) It finds the corresponding link in the lower
+// space, and copies the counts from upper to lower. If someone else
+// had incremented counts in lower, they get clobbered. Explicitly:
+//
+//    Thread A: (same Thread A as above) Drops to lower space, calls
+//              increment on link that its holding (this link is in
+//              the upper space.) AtomSpace::increment_count() searches
+//              for a matching link in the lower space, by calling
+//              AtomSpace::add() in the lower space.
+//    Thread C: Increments count on link in lower space.
+//    Thread A: Finds link in lower space, copies count from the upper
+//              link to the lower space. This clobbers the increment
+//              that Thread C had done.
+//
+// So two races: First, a surprise copy into the upper space, and then
+// a surprse clobber of counts in the lower spaces. Both races must
+// happen, for the counts to get clobbered.  Since two races are
+// required, the actual failure is quite rare.
+//
+// Whose fault is this? Well really, the fault of the unit test. It
+// really should not be doing this in the first place. So, yes, this
+// test will fail intermittently. But... whatever. We run it anyway.
+// If you are reading this: well .. sorry about that.
+//
+// You can fix this test by setting `(cog-atomspace-cow! #f)`
+// immediately after the `(cog-push-atomspace)` This will avoid the
+// COW code that is creating the race condition. But for now, I'm
+// leaving this test in the broken state, because I have a perverse
+// sensibility of testing. Think of it as a practical joke. I have
+// created this mess for you to discover and be entertained.
+//
+void ThreadCountUTest::test_push_pop(void)
+{
+	logger().info("BEGIN TEST: %s", __FUNCTION__);
+
+	// Number of loops inside each thread.
+	int n_loops = 1500;
+
+	harness(n_loops, "pushy");
+	logger().info("END TEST: %s", __FUNCTION__);
+}
+
+// ============================================================
+
+void ThreadCountUTest::test_fetch(void)
+{
+	logger().info("BEGIN TEST: %s", __FUNCTION__);
+
+	// Number of loops inside each thread.
+	int n_loops = 27800;
+
+	harness(n_loops, "fetchy");
+	logger().info("END TEST: %s", __FUNCTION__);
+}
+
+/* ============================= END OF FILE ================= */

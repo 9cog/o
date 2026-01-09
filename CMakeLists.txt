@@ -57,6 +57,19 @@ ADD_DEFINITIONS(-DPROJECT_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
 SET(CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake/")
 
 # ============================================================
+# Check for optional packages
+# ============================================================
+
+# RocksDB (optional - for persistent storage backend)
+FIND_PACKAGE(RocksDB)
+IF (ROCKSDB_FOUND)
+	MESSAGE(STATUS "RocksDB found - enabling RocksDB storage backend.")
+	SET(HAVE_ROCKSDB 1)
+ELSE (ROCKSDB_FOUND)
+	MESSAGE(STATUS "RocksDB not found - RocksDB storage backend disabled.")
+ENDIF (ROCKSDB_FOUND)
+
+# ============================================================
 # Build subdirectories
 # ============================================================
 
