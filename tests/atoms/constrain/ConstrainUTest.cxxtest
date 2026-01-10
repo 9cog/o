@@ -1,0 +1,564 @@
+/*
+ * tests/atoms/constrain/ConstrainUTest.cxxtest
+ *
+ * Copyright (C) 2025 OpenCog Foundation
+ * All Rights Reserved
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License v3 as
+ * published by the Free Software Foundation and including the exceptions
+ * at http://opencog.org/wiki/Licenses
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program; if not, write to:
+ * Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
+
+#include <opencog/atoms/base/Atom.h>
+#include <opencog/atoms/base/Link.h>
+#include <opencog/atoms/base/Node.h>
+#include <opencog/atoms/constrain/AbsentLink.h>
+#include <opencog/atoms/constrain/AlphaEqualLink.h>
+#include <opencog/atoms/constrain/EqualLink.h>
+#include <opencog/atoms/constrain/ExclusiveLink.h>
+#include <opencog/atoms/constrain/IdenticalLink.h>
+#include <opencog/atoms/constrain/IsClosedLink.h>
+#include <opencog/atoms/constrain/PresentLink.h>
+#include <opencog/atomspace/AtomSpace.h>
+#include <opencog/util/exceptions.h>
+
+using namespace opencog;
+
+class ConstrainUTest : public CxxTest::TestSuite
+{
+private:
+	AtomSpacePtr as;
+
+public:
+	ConstrainUTest()
+	{
+		as = createAtomSpace();
+	}
+
+	void setUp() { as->clear(); }
+	void tearDown() {}
+
+	// ===================== AbsentLink Tests =====================
+
+	void test_AbsentLink_basic()
+	{
+		// Create an atom not in atomspace
+		Handle a = createNode(CONCEPT_NODE, "absent_test");
+		HandleSeq oset = {a};
+		Handle absent = createLink(std::move(oset), ABSENT_LINK);
+
+		// The AbsentLink should evaluate to true if the atom is not present
+		AbsentLink* al = AbsentLinkCast(absent);
+		TS_ASSERT(al != nullptr);
+		TS_ASSERT(al->bevaluate(as.get(), false) == true);
+
+		// Now add the atom to the atomspace
+		as->add_atom(a);
+
+		// Now AbsentLink should return false
+		TS_ASSERT(al->bevaluate(as.get(), false) == false);
+	}
+
+	void test_AbsentLink_multiple()
+	{
+		Handle a = createNode(CONCEPT_NODE, "absent_a");
+		Handle b = createNode(CONCEPT_NODE, "absent_b");
+		HandleSeq oset = {a, b};
+		Handle absent = createLink(std::move(oset), ABSENT_LINK);
+		AbsentLink* al = AbsentLinkCast(absent);
+
+		// Neither atom is present, should return true
+		TS_ASSERT(al->bevaluate(as.get(), false) == true);
+
+		// Add one atom
+		as->add_atom(a);
+
+		// Now one atom is present, should return false
+		TS_ASSERT(al->bevaluate(as.get(), false) == false);
+	}
+
+	void test_AbsentLink_nullptr_atomspace()
+	{
+		Handle a = createNode(CONCEPT_NODE, "absent_null");
+		HandleSeq oset = {a};
+		Handle absent = createLink(std::move(oset), ABSENT_LINK);
+		AbsentLink* al = AbsentLinkCast(absent);
+
+		// With nullptr atomspace, should return true
+		TS_ASSERT(al->bevaluate(nullptr, false) == true);
+	}
+
+	// ===================== PresentLink Tests =====================
+
+	void test_PresentLink_basic()
+	{
+		Handle a = as->add_node(CONCEPT_NODE, "present_test");
+		HandleSeq oset = {a};
+		Handle present = createLink(std::move(oset), PRESENT_LINK);
+		PresentLink* pl = PresentLinkCast(present);
+
+		TS_ASSERT(pl != nullptr);
+		// Atom is present, should return true
+		TS_ASSERT(pl->bevaluate(as.get(), false) == true);
+	}
+
+	void test_PresentLink_missing()
+	{
+		Handle a = createNode(CONCEPT_NODE, "not_in_atomspace");
+		HandleSeq oset = {a};
+		Handle present = createLink(std::move(oset), PRESENT_LINK);
+		PresentLink* pl = PresentLinkCast(present);
+
+		// Atom is not present, should return false
+		TS_ASSERT(pl->bevaluate(as.get(), false) == false);
+	}
+
+	void test_PresentLink_multiple()
+	{
+		Handle a = as->add_node(CONCEPT_NODE, "present_a");
+		Handle b = as->add_node(CONCEPT_NODE, "present_b");
+		HandleSeq oset = {a, b};
+		Handle present = createLink(std::move(oset), PRESENT_LINK);
+		PresentLink* pl = PresentLinkCast(present);
+
+		// Both atoms are present, should return true
+		TS_ASSERT(pl->bevaluate(as.get(), false) == true);
+	}
+
+	void test_PresentLink_partial()
+	{
+		Handle a = as->add_node(CONCEPT_NODE, "present_partial_a");
+		Handle b = createNode(CONCEPT_NODE, "present_partial_b");
+		HandleSeq oset = {a, b};
+		Handle present = createLink(std::move(oset), PRESENT_LINK);
+		PresentLink* pl = PresentLinkCast(present);
+
+		// Only one atom is present, should return false
+		TS_ASSERT(pl->bevaluate(as.get(), false) == false);
+	}
+
+	void test_PresentLink_dedup()
+	{
+		// PresentLink should remove duplicate atoms
+		Handle a = as->add_node(CONCEPT_NODE, "dedup_test");
+		HandleSeq oset = {a, a, a};
+		Handle present = createLink(std::move(oset), PRESENT_LINK);
+
+		// After dedup, should only have one element
+		TS_ASSERT_EQUALS(present->get_arity(), 1);
+	}
+
+	// ===================== EqualLink Tests =====================
+
+	void test_EqualLink_equal_atoms()
+	{
+		Handle a = as->add_node(CONCEPT_NODE, "equal_test");
+		Handle b = as->add_node(CONCEPT_NODE, "equal_test");
+		HandleSeq oset = {a, b};
+		Handle equal = createLink(std::move(oset), EQUAL_LINK);
+		EqualLink* el = EqualLinkCast(equal);
+
+		// Same atoms should be equal
+		TS_ASSERT(el->bevaluate(as.get(), false) == true);
+	}
+
+	void test_EqualLink_unequal_atoms()
+	{
+		Handle a = createNode(CONCEPT_NODE, "equal_a");
+		Handle b = createNode(CONCEPT_NODE, "equal_b");
+		Handle var = createNode(VARIABLE_NODE, "$x");
+		HandleSeq oset = {a, b, var};
+		Handle equal = createLink(std::move(oset), EQUAL_LINK);
+		EqualLink* el = EqualLinkCast(equal);
+
+		// Different atoms should not be equal (ignoring variables)
+		TS_ASSERT(el->bevaluate(as.get(), false) == false);
+	}
+
+	void test_EqualLink_single_element()
+	{
+		Handle a = createNode(CONCEPT_NODE, "single_elem");
+		HandleSeq oset = {a};
+		Handle equal = createLink(std::move(oset), EQUAL_LINK);
+		EqualLink* el = EqualLinkCast(equal);
+
+		// Single element should always be equal to itself
+		TS_ASSERT(el->bevaluate(as.get(), false) == true);
+	}
+
+	void test_EqualLink_empty()
+	{
+		HandleSeq oset = {};
+		Handle equal = createLink(std::move(oset), EQUAL_LINK);
+		EqualLink* el = EqualLinkCast(equal);
+
+		// Empty set should return true
+		TS_ASSERT(el->bevaluate(as.get(), false) == true);
+	}
+
+	void test_EqualLink_with_variables()
+	{
+		Handle var1 = createNode(VARIABLE_NODE, "$x");
+		Handle var2 = createNode(VARIABLE_NODE, "$y");
+		HandleSeq oset = {var1, var2};
+		Handle equal = createLink(std::move(oset), EQUAL_LINK);
+		EqualLink* el = EqualLinkCast(equal);
+
+		// Variables are skipped, so should return true
+		TS_ASSERT(el->bevaluate(as.get(), false) == true);
+	}
+
+	// ===================== IdenticalLink Tests =====================
+
+	void test_IdenticalLink_identical()
+	{
+		Handle a = createNode(CONCEPT_NODE, "identical_test");
+		HandleSeq oset = {a, a};
+		Handle identical = createLink(std::move(oset), IDENTICAL_LINK);
+		IdenticalLink* il = IdenticalLinkCast(identical);
+
+		TS_ASSERT(il->bevaluate(as.get(), false) == true);
+	}
+
+	void test_IdenticalLink_not_identical()
+	{
+		Handle a = createNode(CONCEPT_NODE, "identical_a");
+		Handle b = createNode(CONCEPT_NODE, "identical_b");
+		HandleSeq oset = {a, b};
+		Handle identical = createLink(std::move(oset), IDENTICAL_LINK);
+		IdenticalLink* il = IdenticalLinkCast(identical);
+
+		TS_ASSERT(il->bevaluate(as.get(), false) == false);
+	}
+
+	void test_IdenticalLink_with_variable()
+	{
+		Handle a = createNode(CONCEPT_NODE, "identical_const");
+		Handle var = createNode(VARIABLE_NODE, "$x");
+		HandleSeq oset = {a, var};
+		Handle identical = createLink(std::move(oset), IDENTICAL_LINK);
+		IdenticalLink* il = IdenticalLinkCast(identical);
+
+		// Only one constant, should return true
+		TS_ASSERT(il->bevaluate(as.get(), false) == true);
+	}
+
+	void test_IdenticalLink_single()
+	{
+		Handle a = createNode(CONCEPT_NODE, "single_identical");
+		HandleSeq oset = {a};
+		Handle identical = createLink(std::move(oset), IDENTICAL_LINK);
+		IdenticalLink* il = IdenticalLinkCast(identical);
+
+		TS_ASSERT(il->bevaluate(as.get(), false) == true);
+	}
+
+	void test_IdenticalLink_setAtomSpace_reject()
+	{
+		Handle a = createNode(CONCEPT_NODE, "id_reject_a");
+		Handle b = createNode(CONCEPT_NODE, "id_reject_b");
+		HandleSeq oset = {a, b};
+		Handle identical = createLink(std::move(oset), IDENTICAL_LINK);
+
+		// Should throw when trying to add non-identical link to atomspace
+		TS_ASSERT_THROWS(as->add_atom(identical), SyntaxException&);
+	}
+
+	// ===================== ExclusiveLink Tests =====================
+
+	void test_ExclusiveLink_all_different()
+	{
+		Handle a = createNode(CONCEPT_NODE, "excl_a");
+		Handle b = createNode(CONCEPT_NODE, "excl_b");
+		Handle c = createNode(CONCEPT_NODE, "excl_c");
+		HandleSeq oset = {a, b, c};
+		Handle exclusive = createLink(std::move(oset), EXCLUSIVE_LINK);
+		ExclusiveLink* el = ExclusiveLinkCast(exclusive);
+
+		// All different should return true
+		TS_ASSERT(el->bevaluate(as.get(), false) == true);
+	}
+
+	void test_ExclusiveLink_setAtomSpace_reject_duplicates()
+	{
+		Handle a = createNode(CONCEPT_NODE, "excl_dup");
+		Handle b = createNode(CONCEPT_NODE, "excl_dup");
+		HandleSeq oset = {a, b};
+		Handle exclusive = createLink(std::move(oset), EXCLUSIVE_LINK);
+
+		// Should throw when trying to add with duplicate (identical) elements
+		TS_ASSERT_THROWS(as->add_atom(exclusive), SyntaxException&);
+	}
+
+	// ===================== AlphaEqualLink Tests =====================
+
+	void test_AlphaEqualLink_same_structure()
+	{
+		// Create two structurally identical expressions with different var names
+		Handle x = createNode(VARIABLE_NODE, "$x");
+		Handle y = createNode(VARIABLE_NODE, "$y");
+		Handle a = createNode(CONCEPT_NODE, "alpha_const");
+
+		Handle expr1 = createLink({a, x}, LIST_LINK);
+		Handle expr2 = createLink({a, y}, LIST_LINK);
+
+		HandleSeq oset = {expr1, expr2};
+		Handle alpha = createLink(std::move(oset), ALPHA_EQUAL_LINK);
+		AlphaEqualLink* al = AlphaEqualLinkCast(alpha);
+
+		// Should be alpha-equivalent (same structure, different var names)
+		TS_ASSERT(al->bevaluate(as.get(), false) == true);
+	}
+
+	void test_AlphaEqualLink_different_structure()
+	{
+		Handle x = createNode(VARIABLE_NODE, "$x");
+		Handle a = createNode(CONCEPT_NODE, "alpha_a");
+		Handle b = createNode(CONCEPT_NODE, "alpha_b");
+
+		Handle expr1 = createLink({a, x}, LIST_LINK);
+		Handle expr2 = createLink({b, x}, LIST_LINK);
+
+		HandleSeq oset = {expr1, expr2};
+		Handle alpha = createLink(std::move(oset), ALPHA_EQUAL_LINK);
+		AlphaEqualLink* al = AlphaEqualLinkCast(alpha);
+
+		// Different constants, not alpha-equivalent
+		TS_ASSERT(al->bevaluate(as.get(), false) == false);
+	}
+
+	void test_AlphaEqualLink_single()
+	{
+		Handle a = createNode(CONCEPT_NODE, "single_alpha");
+		HandleSeq oset = {a};
+		Handle alpha = createLink(std::move(oset), ALPHA_EQUAL_LINK);
+		AlphaEqualLink* al = AlphaEqualLinkCast(alpha);
+
+		// Single element always alpha-equal to itself
+		TS_ASSERT(al->bevaluate(as.get(), false) == true);
+	}
+
+	// ===================== IsClosedLink Tests =====================
+
+	void test_IsClosedLink_closed()
+	{
+		Handle a = createNode(CONCEPT_NODE, "closed_test");
+		HandleSeq oset = {a};
+		Handle isclosed = createLink(std::move(oset), IS_CLOSED_LINK);
+		IsClosedLink* icl = IsClosedLinkCast(isclosed);
+
+		// ConceptNode has no free variables, is closed
+		TS_ASSERT(icl->bevaluate(as.get(), false) == true);
+	}
+
+	void test_IsClosedLink_not_closed()
+	{
+		Handle var = createNode(VARIABLE_NODE, "$x");
+		HandleSeq oset = {var};
+		Handle isclosed = createLink(std::move(oset), IS_CLOSED_LINK);
+		IsClosedLink* icl = IsClosedLinkCast(isclosed);
+
+		// VariableNode is not closed
+		TS_ASSERT(icl->bevaluate(as.get(), false) == false);
+	}
+
+	void test_IsClosedLink_nested_variable()
+	{
+		Handle var = createNode(VARIABLE_NODE, "$x");
+		Handle a = createNode(CONCEPT_NODE, "nested_const");
+		Handle list = createLink({a, var}, LIST_LINK);
+		HandleSeq oset = {list};
+		Handle isclosed = createLink(std::move(oset), IS_CLOSED_LINK);
+		IsClosedLink* icl = IsClosedLinkCast(isclosed);
+
+		// Link contains a variable, not closed
+		TS_ASSERT(icl->bevaluate(as.get(), false) == false);
+	}
+
+	void test_IsClosedLink_multiple()
+	{
+		Handle a = createNode(CONCEPT_NODE, "closed_a");
+		Handle b = createNode(CONCEPT_NODE, "closed_b");
+		HandleSeq oset = {a, b};
+		Handle isclosed = createLink(std::move(oset), IS_CLOSED_LINK);
+		IsClosedLink* icl = IsClosedLinkCast(isclosed);
+
+		// Both are closed
+		TS_ASSERT(icl->bevaluate(as.get(), false) == true);
+	}
+
+	void test_IsClosedLink_mixed()
+	{
+		Handle a = createNode(CONCEPT_NODE, "mixed_closed");
+		Handle var = createNode(VARIABLE_NODE, "$x");
+		HandleSeq oset = {a, var};
+		Handle isclosed = createLink(std::move(oset), IS_CLOSED_LINK);
+		IsClosedLink* icl = IsClosedLinkCast(isclosed);
+
+		// One is not closed
+		TS_ASSERT(icl->bevaluate(as.get(), false) == false);
+	}
+
+	// ===================== Type Checking Tests =====================
+
+	void test_AbsentLink_type_check()
+	{
+		Handle a = createNode(CONCEPT_NODE, "type_test");
+		HandleSeq oset = {a};
+
+		// Create an AbsentLink
+		Handle absent = createLink(std::move(oset), ABSENT_LINK);
+
+		// Verify it's the correct type
+		TS_ASSERT(absent->get_type() == ABSENT_LINK);
+		TS_ASSERT(AbsentLinkCast(absent) != nullptr);
+	}
+
+	void test_PresentLink_type_check()
+	{
+		Handle a = createNode(CONCEPT_NODE, "type_test");
+		HandleSeq oset = {a};
+
+		Handle present = createLink(std::move(oset), PRESENT_LINK);
+
+		TS_ASSERT(present->get_type() == PRESENT_LINK);
+		TS_ASSERT(PresentLinkCast(present) != nullptr);
+	}
+
+	void test_EqualLink_type_check()
+	{
+		Handle a = createNode(CONCEPT_NODE, "type_test");
+		Handle var = createNode(VARIABLE_NODE, "$x");
+		HandleSeq oset = {a, var};
+
+		Handle equal = createLink(std::move(oset), EQUAL_LINK);
+
+		TS_ASSERT(equal->get_type() == EQUAL_LINK);
+		TS_ASSERT(EqualLinkCast(equal) != nullptr);
+	}
+
+	void test_IdenticalLink_type_check()
+	{
+		Handle a = createNode(CONCEPT_NODE, "type_test");
+		HandleSeq oset = {a, a};
+
+		Handle identical = createLink(std::move(oset), IDENTICAL_LINK);
+
+		TS_ASSERT(identical->get_type() == IDENTICAL_LINK);
+		TS_ASSERT(IdenticalLinkCast(identical) != nullptr);
+	}
+
+	void test_ExclusiveLink_type_check()
+	{
+		Handle a = createNode(CONCEPT_NODE, "excl_type_a");
+		Handle b = createNode(CONCEPT_NODE, "excl_type_b");
+		HandleSeq oset = {a, b};
+
+		Handle exclusive = createLink(std::move(oset), EXCLUSIVE_LINK);
+
+		TS_ASSERT(exclusive->get_type() == EXCLUSIVE_LINK);
+		TS_ASSERT(ExclusiveLinkCast(exclusive) != nullptr);
+	}
+
+	void test_AlphaEqualLink_type_check()
+	{
+		Handle a = createNode(CONCEPT_NODE, "alpha_type");
+		HandleSeq oset = {a, a};
+
+		Handle alpha = createLink(std::move(oset), ALPHA_EQUAL_LINK);
+
+		TS_ASSERT(alpha->get_type() == ALPHA_EQUAL_LINK);
+		TS_ASSERT(AlphaEqualLinkCast(alpha) != nullptr);
+	}
+
+	void test_IsClosedLink_type_check()
+	{
+		Handle a = createNode(CONCEPT_NODE, "closed_type");
+		HandleSeq oset = {a};
+
+		Handle isclosed = createLink(std::move(oset), IS_CLOSED_LINK);
+
+		TS_ASSERT(isclosed->get_type() == IS_CLOSED_LINK);
+		TS_ASSERT(IsClosedLinkCast(isclosed) != nullptr);
+	}
+
+	// ===================== Invalid Type Tests =====================
+
+	void test_AbsentLink_invalid_type()
+	{
+		Handle a = createNode(CONCEPT_NODE, "invalid_type");
+		HandleSeq oset = {a};
+
+		// Try to create an AbsentLink with wrong type
+		TS_ASSERT_THROWS(
+			AbsentLink(std::move(oset), LIST_LINK),
+			InvalidParamException&
+		);
+	}
+
+	void test_EqualLink_invalid_type()
+	{
+		Handle a = createNode(CONCEPT_NODE, "invalid_type");
+		HandleSeq oset = {a};
+
+		TS_ASSERT_THROWS(
+			EqualLink(std::move(oset), LIST_LINK),
+			InvalidParamException&
+		);
+	}
+
+	void test_IdenticalLink_invalid_type()
+	{
+		Handle a = createNode(CONCEPT_NODE, "invalid_type");
+		HandleSeq oset = {a};
+
+		TS_ASSERT_THROWS(
+			IdenticalLink(std::move(oset), LIST_LINK),
+			InvalidParamException&
+		);
+	}
+
+	void test_ExclusiveLink_invalid_type()
+	{
+		Handle a = createNode(CONCEPT_NODE, "invalid_type");
+		HandleSeq oset = {a};
+
+		TS_ASSERT_THROWS(
+			ExclusiveLink(std::move(oset), LIST_LINK),
+			InvalidParamException&
+		);
+	}
+
+	void test_AlphaEqualLink_invalid_type()
+	{
+		Handle a = createNode(CONCEPT_NODE, "invalid_type");
+		HandleSeq oset = {a};
+
+		TS_ASSERT_THROWS(
+			AlphaEqualLink(std::move(oset), LIST_LINK),
+			InvalidParamException&
+		);
+	}
+
+	void test_IsClosedLink_invalid_type()
+	{
+		Handle a = createNode(CONCEPT_NODE, "invalid_type");
+		HandleSeq oset = {a};
+
+		TS_ASSERT_THROWS(
+			IsClosedLink(std::move(oset), LIST_LINK),
+			InvalidParamException&
+		);
+	}
+};

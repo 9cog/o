@@ -56,6 +56,25 @@ ADD_DEFINITIONS(-DPROJECT_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
 # Add the 'cmake' dir to cmake's module search path.
 SET(CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake/")
 
+# Include OpenCog helper macros and options
+INCLUDE(OpenCogFunctions)
+INCLUDE(OpenCogGccOptions)
+INCLUDE(OpenCogInstallOptions)
+INCLUDE(OpenCogLibOptions)
+INCLUDE(OpenCogTestOptions)
+INCLUDE(OpenCogAtomTypes)
+INCLUDE(AddCxxtest)
+
+# Find required packages
+FIND_PACKAGE(Cxxtest)
+INCLUDE(OpenCogFindGuile)
+INCLUDE(OpenCogFindPython)
+
+# Include guile macros if available
+IF (HAVE_GUILE)
+    INCLUDE(OpenCogGuile)
+ENDIF (HAVE_GUILE)
+
 # ============================================================
 # Check for optional packages
 # ============================================================

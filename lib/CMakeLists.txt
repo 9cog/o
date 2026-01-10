@@ -1,6 +1,8 @@
 # Unified OpenCog Library Configuration
 # Merged from cogutil and atomspace
 
+include(CMakePackageConfigHelpers)
+
 # ============================================================
 # CogUtil pkg-config
 # ============================================================
@@ -34,8 +36,6 @@ install(EXPORT AtomSpaceTargets
 	FILE AtomSpaceTargets.cmake
 	DESTINATION ${ConfigPackageLocation}
 )
-
-include(CMakePackageConfigHelpers)
 
 configure_package_config_file(AtomSpaceConfig.cmake.in
 	${CMAKE_CURRENT_BINARY_DIR}/AtomSpaceConfig.cmake

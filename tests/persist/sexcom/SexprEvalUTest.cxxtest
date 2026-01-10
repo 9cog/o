@@ -1,0 +1,422 @@
+/*
+ * tests/persist/sexcom/SexprEvalUTest.cxxtest
+ *
+ * Copyright (C) 2025 OpenCog Foundation
+ * All Rights Reserved
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License v3 as
+ * published by the Free Software Foundation and including the exceptions
+ * at http://opencog.org/wiki/Licenses
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program; if not, write to:
+ * Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
+
+#include <opencog/atoms/base/Atom.h>
+#include <opencog/atoms/base/Link.h>
+#include <opencog/atoms/base/Node.h>
+#include <opencog/persist/sexcom/SexprEval.h>
+#include <opencog/persist/sexcom/Dispatcher.h>
+#include <opencog/persist/sexcom/Commands.h>
+#include <opencog/atomspace/AtomSpace.h>
+#include <opencog/util/exceptions.h>
+
+using namespace opencog;
+
+class SexprEvalUTest : public CxxTest::TestSuite
+{
+private:
+	AtomSpacePtr as;
+
+public:
+	SexprEvalUTest()
+	{
+		as = createAtomSpace();
+	}
+
+	void setUp() { as->clear(); }
+	void tearDown() {}
+
+	// ===================== SexprEval Basic Tests =====================
+
+	void test_get_evaluator()
+	{
+		SexprEval* eval = SexprEval::get_evaluator(as);
+		TS_ASSERT(eval != nullptr);
+	}
+
+	void test_get_name()
+	{
+		SexprEval* eval = SexprEval::get_evaluator(as);
+		TS_ASSERT_EQUALS(eval->get_name(), "SexprEval");
+	}
+
+	void test_eval_ping()
+	{
+		SexprEval* eval = SexprEval::get_evaluator(as);
+		eval->begin_eval();
+		eval->eval_expr("(ping)");
+		std::string result = eval->poll_result();
+
+		TS_ASSERT(!result.empty());
+		TS_ASSERT(result.find("()") != std::string::npos);
+	}
+
+	void test_eval_version()
+	{
+		SexprEval* eval = SexprEval::get_evaluator(as);
+		eval->begin_eval();
+		eval->eval_expr("(cog-version)");
+		std::string result = eval->poll_result();
+
+		TS_ASSERT(!result.empty());
+		// Result should contain version string
+	}
+
+	void test_eval_comment()
+	{
+		SexprEval* eval = SexprEval::get_evaluator(as);
+		eval->begin_eval();
+		eval->eval_expr("; this is a comment");
+		std::string result = eval->poll_result();
+
+		// Comments should return empty
+		TS_ASSERT(result.empty());
+	}
+
+	void test_eval_whitespace()
+	{
+		SexprEval* eval = SexprEval::get_evaluator(as);
+		eval->begin_eval();
+		eval->eval_expr("   \n\t   ");
+		std::string result = eval->poll_result();
+
+		// Whitespace should return empty
+		TS_ASSERT(result.empty());
+	}
+
+	void test_eval_bad_syntax()
+	{
+		SexprEval* eval = SexprEval::get_evaluator(as);
+		eval->begin_eval();
+
+		// Missing open paren
+		eval->eval_expr("ping)");
+		std::string result = eval->poll_result();
+
+		// Should have caught error
+		TS_ASSERT(eval->eval_error());
+	}
+
+	void test_eval_unsupported_command()
+	{
+		SexprEval* eval = SexprEval::get_evaluator(as);
+		eval->begin_eval();
+
+		eval->eval_expr("(unsupported-command)");
+		std::string result = eval->poll_result();
+
+		// Should have caught error
+		TS_ASSERT(eval->eval_error());
+	}
+
+	void test_interrupt()
+	{
+		SexprEval* eval = SexprEval::get_evaluator(as);
+
+		eval->interrupt();
+
+		TS_ASSERT(eval->eval_error());
+		TS_ASSERT(eval->get_error_string().find("interrupt") != std::string::npos);
+	}
+
+	// ===================== Dispatcher Tests =====================
+
+	void test_dispatcher_default()
+	{
+		Dispatcher disp;
+		disp.set_base_space(as);
+
+		std::string result = disp.interpret_command("(ping)");
+		TS_ASSERT_EQUALS(result, "()");
+	}
+
+	void test_dispatcher_atomspace()
+	{
+		Dispatcher disp;
+		disp.set_base_space(as);
+
+		std::string result = disp.interpret_command("(cog-atomspace)");
+		// Should return representation of atomspace or ()
+		TS_ASSERT(!result.empty() || result == "()");
+	}
+
+	void test_dispatcher_atomspace_clear()
+	{
+		Dispatcher disp;
+		disp.set_base_space(as);
+
+		// Add an atom first
+		as->add_node(CONCEPT_NODE, "test");
+		TS_ASSERT(as->get_size() > 0);
+
+		std::string result = disp.interpret_command("(cog-atomspace-clear)");
+		TS_ASSERT_EQUALS(result, "#t");
+		TS_ASSERT_EQUALS(as->get_size(), 0);
+	}
+
+	void test_dispatcher_bad_syntax_no_paren()
+	{
+		Dispatcher disp;
+		disp.set_base_space(as);
+
+		TS_ASSERT_THROWS(disp.interpret_command("ping"), SyntaxException&);
+	}
+
+	void test_dispatcher_unsupported_command()
+	{
+		Dispatcher disp;
+		disp.set_base_space(as);
+
+		TS_ASSERT_THROWS(disp.interpret_command("(unsupported-cmd arg)"), SyntaxException&);
+	}
+
+	void test_dispatcher_install_handler()
+	{
+		Dispatcher disp;
+		disp.set_base_space(as);
+
+		bool handler_called = false;
+		auto custom_handler = [&handler_called](const std::string& arg) -> std::string {
+			handler_called = true;
+			return "custom-result";
+		};
+
+		disp.install_handler("my-custom-cmd", custom_handler);
+
+		std::string result = disp.interpret_command("(my-custom-cmd arg1)");
+		TS_ASSERT(handler_called);
+		TS_ASSERT_EQUALS(result, "custom-result");
+	}
+
+	// ===================== Commands Tests =====================
+
+	void test_commands_cog_node()
+	{
+		Commands cmd;
+		cmd.set_base_space(as);
+
+		// Add a node first
+		as->add_node(CONCEPT_NODE, "test_node");
+
+		std::string result = cmd.cog_node("'Concept \"test_node\"");
+		TS_ASSERT(result.find("Concept") != std::string::npos);
+		TS_ASSERT(result.find("test_node") != std::string::npos);
+	}
+
+	void test_commands_cog_node_not_found()
+	{
+		Commands cmd;
+		cmd.set_base_space(as);
+
+		std::string result = cmd.cog_node("'Concept \"nonexistent\"");
+		TS_ASSERT(result.find("#f") != std::string::npos);
+	}
+
+	void test_commands_cog_atomspace()
+	{
+		Commands cmd;
+		cmd.set_base_space(as);
+
+		std::string result = cmd.cog_atomspace("");
+		// Without top space set, should return ()
+		TS_ASSERT_EQUALS(result, "()");
+	}
+
+	void test_commands_cog_ping()
+	{
+		Commands cmd;
+		cmd.set_base_space(as);
+
+		std::string result = cmd.cog_ping("");
+		TS_ASSERT_EQUALS(result, "()");
+	}
+
+	void test_commands_cog_atomspace_clear()
+	{
+		Commands cmd;
+		cmd.set_base_space(as);
+
+		// Add some atoms
+		as->add_node(CONCEPT_NODE, "a");
+		as->add_node(CONCEPT_NODE, "b");
+		TS_ASSERT(as->get_size() > 0);
+
+		std::string result = cmd.cog_atomspace_clear("");
+		TS_ASSERT_EQUALS(result, "#t");
+		TS_ASSERT_EQUALS(as->get_size(), 0);
+	}
+
+	void test_commands_cog_extract()
+	{
+		Commands cmd;
+		cmd.set_base_space(as);
+
+		// Add a node
+		Handle h = as->add_node(CONCEPT_NODE, "to_extract");
+		TS_ASSERT(as->get_node(CONCEPT_NODE, "to_extract") != nullptr);
+
+		std::string result = cmd.cog_extract("(Concept \"to_extract\")");
+		TS_ASSERT_EQUALS(result, "#t");
+		TS_ASSERT(as->get_node(CONCEPT_NODE, "to_extract") == nullptr);
+	}
+
+	void test_commands_cog_extract_nonexistent()
+	{
+		Commands cmd;
+		cmd.set_base_space(as);
+
+		std::string result = cmd.cog_extract("(Concept \"nonexistent\")");
+		TS_ASSERT_EQUALS(result, "#t");
+	}
+
+	void test_commands_cog_extract_recursive()
+	{
+		Commands cmd;
+		cmd.set_base_space(as);
+
+		// Add some linked atoms
+		Handle a = as->add_node(CONCEPT_NODE, "rec_a");
+		Handle b = as->add_node(CONCEPT_NODE, "rec_b");
+		Handle link = as->add_link(LIST_LINK, a, b);
+
+		TS_ASSERT(as->get_link(LIST_LINK, a, b) != nullptr);
+
+		std::string result = cmd.cog_extract_recursive("(Concept \"rec_a\")");
+		TS_ASSERT_EQUALS(result, "#t");
+	}
+
+	void test_commands_cog_get_atoms()
+	{
+		Commands cmd;
+		cmd.set_base_space(as);
+
+		// Add some atoms
+		as->add_node(CONCEPT_NODE, "get_a");
+		as->add_node(CONCEPT_NODE, "get_b");
+		as->add_node(NUMBER_NODE, "42");
+
+		std::string result = cmd.cog_get_atoms("'Concept #f");
+		TS_ASSERT(result.find("get_a") != std::string::npos);
+		TS_ASSERT(result.find("get_b") != std::string::npos);
+		// NUMBER_NODE should not be included
+		TS_ASSERT(result.find("42") == std::string::npos);
+	}
+
+	void test_commands_cog_version()
+	{
+		Commands cmd;
+		cmd.set_base_space(as);
+
+		std::string result = cmd.cog_version("");
+		TS_ASSERT(!result.empty());
+	}
+
+	// ===================== Integration Tests =====================
+
+	void test_eval_set_value()
+	{
+		SexprEval* eval = SexprEval::get_evaluator(as);
+
+		// First add an atom
+		Handle a = as->add_node(CONCEPT_NODE, "value_test");
+		Handle key = as->add_node(PREDICATE_NODE, "mykey");
+
+		eval->begin_eval();
+		eval->eval_expr("(cog-set-value! (Concept \"value_test\") (Predicate \"mykey\") (FloatValue 1 2 3))");
+		std::string result = eval->poll_result();
+
+		// Check that value was set
+		ValuePtr v = a->getValue(key);
+		TS_ASSERT(v != nullptr);
+	}
+
+	void test_eval_get_value()
+	{
+		SexprEval* eval = SexprEval::get_evaluator(as);
+
+		// Set up an atom with a value
+		Handle a = as->add_node(CONCEPT_NODE, "get_value_test");
+		Handle key = as->add_node(PREDICATE_NODE, "getkey");
+		a->setValue(key, createFloatValue(std::vector<double>{1.0, 2.0, 3.0}));
+
+		eval->begin_eval();
+		eval->eval_expr("(cog-value (Concept \"get_value_test\") (Predicate \"getkey\"))");
+		std::string result = eval->poll_result();
+
+		TS_ASSERT(result.find("FloatValue") != std::string::npos);
+	}
+
+	void test_eval_keys_alist()
+	{
+		SexprEval* eval = SexprEval::get_evaluator(as);
+
+		// Set up an atom with values
+		Handle a = as->add_node(CONCEPT_NODE, "keys_test");
+		Handle key1 = as->add_node(PREDICATE_NODE, "key1");
+		Handle key2 = as->add_node(PREDICATE_NODE, "key2");
+		a->setValue(key1, createFloatValue(1.0));
+		a->setValue(key2, createFloatValue(2.0));
+
+		eval->begin_eval();
+		eval->eval_expr("(cog-keys->alist (Concept \"keys_test\"))");
+		std::string result = eval->poll_result();
+
+		TS_ASSERT(result.find("key1") != std::string::npos);
+		TS_ASSERT(result.find("key2") != std::string::npos);
+	}
+
+	void test_eval_incoming_set()
+	{
+		SexprEval* eval = SexprEval::get_evaluator(as);
+
+		// Set up some linked atoms
+		Handle a = as->add_node(CONCEPT_NODE, "inc_a");
+		Handle b = as->add_node(CONCEPT_NODE, "inc_b");
+		as->add_link(LIST_LINK, a, b);
+		as->add_link(INHERITANCE_LINK, a, b);
+
+		eval->begin_eval();
+		eval->eval_expr("(cog-incoming-set (Concept \"inc_a\"))");
+		std::string result = eval->poll_result();
+
+		TS_ASSERT(result.find("ListLink") != std::string::npos ||
+		          result.find("InheritanceLink") != std::string::npos);
+	}
+
+	void test_eval_incoming_by_type()
+	{
+		SexprEval* eval = SexprEval::get_evaluator(as);
+
+		// Set up some linked atoms
+		Handle a = as->add_node(CONCEPT_NODE, "type_a");
+		Handle b = as->add_node(CONCEPT_NODE, "type_b");
+		as->add_link(LIST_LINK, a, b);
+		as->add_link(INHERITANCE_LINK, a, b);
+
+		eval->begin_eval();
+		eval->eval_expr("(cog-incoming-by-type (Concept \"type_a\") 'InheritanceLink)");
+		std::string result = eval->poll_result();
+
+		TS_ASSERT(result.find("InheritanceLink") != std::string::npos);
+		// Should not include ListLink
+	}
+};

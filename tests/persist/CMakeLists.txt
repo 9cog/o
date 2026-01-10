@@ -6,11 +6,14 @@
 # ============================================================
 LINK_LIBRARIES(atomspace)
 
+ADD_SUBDIRECTORY (api)
 ADD_SUBDIRECTORY (csv)
 ADD_SUBDIRECTORY (file)
 ADD_SUBDIRECTORY (flow)
 ADD_SUBDIRECTORY (json)
+ADD_SUBDIRECTORY (prolog)
 ADD_SUBDIRECTORY (proxy)
+ADD_SUBDIRECTORY (sexcom)
 ADD_SUBDIRECTORY (sexpr)
 ADD_SUBDIRECTORY (tlb)
 
