@@ -275,12 +275,41 @@ ValuePtr ATenValue::reshape(const std::vector<int64_t>& new_shape) const
 #ifdef HAVE_ATEN
 	return createATenValue(_tensor.reshape(new_shape).contiguous());
 #else
+	// Handle -1 as "infer from total elements"
+	std::vector<int64_t> resolved_shape = new_shape;
+	int64_t infer_idx = -1;
+	size_t known_total = 1;
+
+	for (size_t i = 0; i < resolved_shape.size(); i++)
+	{
+		if (resolved_shape[i] == -1)
+		{
+			if (infer_idx >= 0)
+				throw RuntimeException(TRACE_INFO,
+					"ATenValue::reshape: only one dimension can be -1");
+			infer_idx = i;
+		}
+		else
+		{
+			known_total *= resolved_shape[i];
+		}
+	}
+
+	if (infer_idx >= 0)
+	{
+		if (_data.size() % known_total != 0)
+			throw RuntimeException(TRACE_INFO,
+				"ATenValue::reshape: cannot infer dimension, size %lu not divisible by %lu",
+				_data.size(), known_total);
+		resolved_shape[infer_idx] = _data.size() / known_total;
+	}
+
 	size_t new_total = 1;
-	for (auto dim : new_shape) new_total *= dim;
+	for (auto dim : resolved_shape) new_total *= dim;
 	if (new_total != _data.size())
 		throw RuntimeException(TRACE_INFO,
 			"ATenValue::reshape: total elements must match");
-	return createATenFromVector(_data, new_shape);
+	return createATenFromVector(_data, resolved_shape);
 #endif
 }
 
