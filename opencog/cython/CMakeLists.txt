@@ -15,7 +15,13 @@
 SET(CMAKE_CXX_FLAGS
 	"${CMAKE_CXX_FLAGS} -fno-strict-aliasing -Wno-unused-function")
 
-ADD_SUBDIRECTORY (opencog)
+# Only build Cython bindings if Cython is available
+IF (CYTHON_FOUND)
+    ADD_SUBDIRECTORY (opencog)
+ENDIF (CYTHON_FOUND)
+
+# The rest of the file requires Python development libraries
+IF (HAVE_PY_LIBS)
 
 INCLUDE_DIRECTORIES(
 	${Python3_INCLUDE_DIRS}
@@ -29,6 +35,9 @@ FILE(COPY opencog/__init__.py DESTINATION opencog)
 FILE(COPY opencog/utilities.py DESTINATION opencog)
 FILE(COPY opencog/type_constructors.py DESTINATION opencog)
 
+# PythonEval is built even without Cython, but depends on atomspace_cython
+# when Cython is available
+IF (CYTHON_FOUND)
 ADD_LIBRARY(PythonEval
 	PythonError.cc
 	PythonEval.cc
@@ -88,10 +97,12 @@ IF(HAVE_GUILE)
 	)
 ENDIF(HAVE_GUILE)
 
+ENDIF (CYTHON_FOUND)
+
 # ============================================================
 # AtomSpace Rocks Cython bindings
 # ============================================================
-IF (HAVE_ROCKSDB)
+IF (HAVE_ROCKSDB AND CYTHON_FOUND)
 
 SET(CYTHON_FLAGS "-3" "-f" "-Wextra")
 
@@ -130,4 +141,6 @@ INSTALL(TARGETS
 	storage_rocks_cython
 	DESTINATION "${PYTHON_DEST}")
 
-ENDIF (HAVE_ROCKSDB)
+ENDIF (HAVE_ROCKSDB AND CYTHON_FOUND)
+
+ENDIF (HAVE_PY_LIBS)

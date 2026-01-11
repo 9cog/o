@@ -1163,9 +1163,5 @@ double AttentionValueTensor::mean_lti() const
 
 // ============================================================
 // Factory registration
-
-DEFINE_LINK_FACTORY(TensorLogicLink, TENSOR_LOGIC_LINK)
-DEFINE_LINK_FACTORY(EmbeddingOfLink, EMBEDDING_OF_LINK)
-DEFINE_LINK_FACTORY(SetEmbeddingLink, SET_EMBEDDING_LINK)
-DEFINE_LINK_FACTORY(SimilarityQueryLink, SIMILARITY_QUERY_LINK)
-DEFINE_LINK_FACTORY(HebbianLink, HEBBIAN_LINK)
+// Note: Factory methods are defined inline with each class above.
+// The DEFINE_LINK_FACTORY macros are not needed here.

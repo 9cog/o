@@ -71,6 +71,8 @@ ADD_LIBRARY(aten
     ATenSpace.cc
     TensorLink.cc
     TensorLogic.cc
+    TensorEquation.cc
+    TensorLogicLinks.cc
 )
 
 # Without this, parallel make will race and crap up the generated files.
@@ -79,7 +81,7 @@ ADD_DEPENDENCIES(aten opencog_atom_types)
 TARGET_LINK_LIBRARIES(aten
     atom_types
     value
-    base
+    atombase
     ${ATEN_LIBRARIES}
     ${COGUTIL_LIBRARY}
 )
@@ -95,5 +97,7 @@ INSTALL(FILES
     ATenSpace.h
     TensorLink.h
     TensorLogic.h
+    TensorEquation.h
+    TensorLogicLinks.h
     DESTINATION "include/opencog/atoms/aten"
 )

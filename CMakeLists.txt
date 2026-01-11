@@ -98,11 +98,12 @@ ADD_SUBDIRECTORY(doc)
 # Configuration files
 ADD_SUBDIRECTORY(etc)
 
-# Library configuration
-ADD_SUBDIRECTORY(lib)
-
 # Main OpenCog source (util, atoms, atomspace, cogserver, network)
+# Must be before lib, as lib exports targets defined here.
 ADD_SUBDIRECTORY(opencog)
+
+# Library configuration (exports targets defined in opencog)
+ADD_SUBDIRECTORY(lib)
 
 # Examples
 ADD_SUBDIRECTORY(examples)

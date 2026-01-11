@@ -209,7 +209,7 @@ Handle ATenSpace::create_concept_node(const std::string& name,
 	if (!_atomspace)
 		throw RuntimeException(TRACE_INFO, "ATenSpace: no AtomSpace configured");
 
-	Handle node = _atomspace->add_node(CONCEPT_NODE, name);
+	Handle node = _atomspace->add_node(CONCEPT_NODE, std::string(name));
 
 	ATenValuePtr emb = embedding;
 	if (!emb) {
