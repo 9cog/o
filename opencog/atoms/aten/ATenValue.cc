@@ -170,7 +170,7 @@ ValuePtr ATenValue::add(const ATenValue& other) const
 	std::vector<double> result(_data.size());
 	for (size_t i = 0; i < _data.size(); i++)
 		result[i] = _data[i] + other._data[i];
-	return createATenValue(result, _shape);
+	return createATenFromVector(result, _shape);
 #endif
 }
 
@@ -185,7 +185,7 @@ ValuePtr ATenValue::sub(const ATenValue& other) const
 	std::vector<double> result(_data.size());
 	for (size_t i = 0; i < _data.size(); i++)
 		result[i] = _data[i] - other._data[i];
-	return createATenValue(result, _shape);
+	return createATenFromVector(result, _shape);
 #endif
 }
 
@@ -200,7 +200,7 @@ ValuePtr ATenValue::mul(const ATenValue& other) const
 	std::vector<double> result(_data.size());
 	for (size_t i = 0; i < _data.size(); i++)
 		result[i] = _data[i] * other._data[i];
-	return createATenValue(result, _shape);
+	return createATenFromVector(result, _shape);
 #endif
 }
 
@@ -215,7 +215,7 @@ ValuePtr ATenValue::div(const ATenValue& other) const
 	std::vector<double> result(_data.size());
 	for (size_t i = 0; i < _data.size(); i++)
 		result[i] = _data[i] / other._data[i];
-	return createATenValue(result, _shape);
+	return createATenFromVector(result, _shape);
 #endif
 }
 
@@ -245,7 +245,7 @@ ValuePtr ATenValue::matmul(const ATenValue& other) const
 			}
 		}
 	}
-	return createATenValue(result, {m, n});
+	return createATenFromVector(result, {m, n});
 #endif
 }
 
@@ -266,7 +266,7 @@ ValuePtr ATenValue::transpose(int64_t dim0, int64_t dim1) const
 			result[j * rows + i] = _data[i * cols + j];
 		}
 	}
-	return createATenValue(result, {cols, rows});
+	return createATenFromVector(result, {cols, rows});
 #endif
 }
 
@@ -275,12 +275,41 @@ ValuePtr ATenValue::reshape(const std::vector<int64_t>& new_shape) const
 #ifdef HAVE_ATEN
 	return createATenValue(_tensor.reshape(new_shape).contiguous());
 #else
+	// Handle -1 as "infer from total elements"
+	std::vector<int64_t> resolved_shape = new_shape;
+	int64_t infer_idx = -1;
+	size_t known_total = 1;
+
+	for (size_t i = 0; i < resolved_shape.size(); i++)
+	{
+		if (resolved_shape[i] == -1)
+		{
+			if (infer_idx >= 0)
+				throw RuntimeException(TRACE_INFO,
+					"ATenValue::reshape: only one dimension can be -1");
+			infer_idx = i;
+		}
+		else
+		{
+			known_total *= resolved_shape[i];
+		}
+	}
+
+	if (infer_idx >= 0)
+	{
+		if (_data.size() % known_total != 0)
+			throw RuntimeException(TRACE_INFO,
+				"ATenValue::reshape: cannot infer dimension, size %lu not divisible by %lu",
+				_data.size(), known_total);
+		resolved_shape[infer_idx] = _data.size() / known_total;
+	}
+
 	size_t new_total = 1;
-	for (auto dim : new_shape) new_total *= dim;
+	for (auto dim : resolved_shape) new_total *= dim;
 	if (new_total != _data.size())
 		throw RuntimeException(TRACE_INFO,
 			"ATenValue::reshape: total elements must match");
-	return createATenValue(_data, new_shape);
+	return createATenFromVector(_data, resolved_shape);
 #endif
 }
 
@@ -290,7 +319,7 @@ ValuePtr ATenValue::sum() const
 	return createATenValue(_tensor.sum());
 #else
 	double s = std::accumulate(_data.begin(), _data.end(), 0.0);
-	return createATenValue({s}, {});
+	return createATenFromVector({s}, {});
 #endif
 }
 
@@ -299,9 +328,9 @@ ValuePtr ATenValue::mean() const
 #ifdef HAVE_ATEN
 	return createATenValue(_tensor.mean());
 #else
-	if (_data.empty()) return createATenValue({0.0}, {});
+	if (_data.empty()) return createATenFromVector({0.0}, {});
 	double s = std::accumulate(_data.begin(), _data.end(), 0.0);
-	return createATenValue({s / _data.size()}, {});
+	return createATenFromVector({s / _data.size()}, {});
 #endif
 }
 
@@ -313,7 +342,7 @@ ValuePtr ATenValue::relu() const
 	std::vector<double> result(_data.size());
 	for (size_t i = 0; i < _data.size(); i++)
 		result[i] = std::max(0.0, _data[i]);
-	return createATenValue(result, _shape);
+	return createATenFromVector(result, _shape);
 #endif
 }
 
@@ -325,7 +354,7 @@ ValuePtr ATenValue::sigmoid() const
 	std::vector<double> result(_data.size());
 	for (size_t i = 0; i < _data.size(); i++)
 		result[i] = 1.0 / (1.0 + std::exp(-_data[i]));
-	return createATenValue(result, _shape);
+	return createATenFromVector(result, _shape);
 #endif
 }
 
@@ -337,7 +366,7 @@ ValuePtr ATenValue::tanh() const
 	std::vector<double> result(_data.size());
 	for (size_t i = 0; i < _data.size(); i++)
 		result[i] = std::tanh(_data[i]);
-	return createATenValue(result, _shape);
+	return createATenFromVector(result, _shape);
 #endif
 }
 
@@ -360,7 +389,7 @@ ValuePtr ATenValue::softmax(int64_t dim) const
 	}
 	for (size_t i = 0; i < _data.size(); i++)
 		exp_vals[i] /= sum_exp;
-	return createATenValue(exp_vals, _shape);
+	return createATenFromVector(exp_vals, _shape);
 #endif
 }
 
@@ -375,7 +404,7 @@ ValuePtr ATenValue::add_scalar(double scalar) const
 	std::vector<double> result(_data.size());
 	for (size_t i = 0; i < _data.size(); i++)
 		result[i] = _data[i] + scalar;
-	return createATenValue(result, _shape);
+	return createATenFromVector(result, _shape);
 #endif
 }
 
@@ -387,7 +416,7 @@ ValuePtr ATenValue::mul_scalar(double scalar) const
 	std::vector<double> result(_data.size());
 	for (size_t i = 0; i < _data.size(); i++)
 		result[i] = _data[i] * scalar;
-	return createATenValue(result, _shape);
+	return createATenFromVector(result, _shape);
 #endif
 }
 

@@ -1522,3 +1522,58 @@ SIMILARITY_QUERY_LINK <- TENSOR_LOGIC_LINK  // Find similar atoms by embedding
 
 // Hebbian learning link (ECAN-style)
 HEBBIAN_LINK <- ORDERED_LINK              // Weighted connection with Hebbian learning
+
+// ==============================================================
+// Tensor Logic (Pedro Domingos' Tensor Logic)
+//
+// Implementation based on https://tensor-logic.org (arXiv:2510.12269)
+// Core insight: logical rules and Einstein summation are the same operation.
+// A tensor equation is a numeric Datalog rule (Einsum).
+
+// Einstein summation operation - the core of Tensor Logic
+// Usage: (EinsumLink (Concept "ij,jk->ik") tensor1 tensor2)
+EINSUM_LINK <- TENSOR_OP_LINK
+
+// Tensor equation definition - a logical rule as a tensor operation
+// Usage: (TensorEquationLink (Predicate "grandparent") (Predicate "parent") ...)
+TENSOR_EQUATION_LINK <- TENSOR_LOGIC_LINK
+
+// Tensor program - collection of facts and equations
+// Usage: (TensorProgramLink (Concept "family") (ListLink equations...))
+TENSOR_PROGRAM_LINK <- TENSOR_LOGIC_LINK
+
+// Query a tensor program for a relation
+// Usage: (TensorQueryLink program (Predicate "grandparent"))
+TENSOR_QUERY_LINK <- TENSOR_LOGIC_LINK
+
+// Add a fact tensor to a program
+// Usage: (TensorFactLink program (Predicate "parent") tensor)
+TENSOR_FACT_LINK <- TENSOR_LOGIC_LINK
+
+// Execute forward chaining on a tensor program
+// Usage: (TensorForwardLink program (Number 10))
+TENSOR_FORWARD_LINK <- TENSOR_LOGIC_LINK
+
+// Train learnable parameters in a tensor program
+// Usage: (TensorTrainLink program targets epochs learning_rate)
+TENSOR_TRAIN_LINK <- TENSOR_LOGIC_LINK
+
+// Convert AtomSpace relation to tensor representation
+// Usage: (RelationToTensorLink (Type "InheritanceLink") (ListLink entities...))
+RELATION_TO_TENSOR_LINK <- TENSOR_LOGIC_LINK
+
+// Convert tensor back to AtomSpace atoms
+// Usage: (TensorToRelationLink tensor (Type "InheritanceLink") entities threshold)
+TENSOR_TO_RELATION_LINK <- TENSOR_LOGIC_LINK
+
+// Parse Datalog-style rule into tensor equation
+// Usage: (DatalogToTensorLink (Concept "grandparent(X,Z) :- parent(X,Y), parent(Y,Z)."))
+DATALOG_TO_TENSOR_LINK <- TENSOR_LOGIC_LINK
+
+// Boolean reasoning mode - strict logical deduction with {0,1} values
+// Usage: (BooleanModeLink (EinsumLink ...))
+BOOLEAN_MODE_LINK <- TENSOR_LOGIC_LINK
+
+// Continuous reasoning mode - differentiable with [0,1] values
+// Usage: (ContinuousModeLink (EinsumLink ...) (Concept "sigmoid"))
+CONTINUOUS_MODE_LINK <- TENSOR_LOGIC_LINK

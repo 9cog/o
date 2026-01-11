@@ -1,0 +1,260 @@
+/*
+ * tests/persist/api/StorageAPIUTest.cxxtest
+ *
+ * Copyright (C) 2025 OpenCog Foundation
+ * All Rights Reserved
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License v3 as
+ * published by the Free Software Foundation and including the exceptions
+ * at http://opencog.org/wiki/Licenses
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program; if not, write to:
+ * Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
+
+#include <opencog/atoms/base/Atom.h>
+#include <opencog/atoms/base/Link.h>
+#include <opencog/atoms/base/Node.h>
+#include <opencog/persist/api/DispatchHash.h>
+#include <opencog/atomspace/AtomSpace.h>
+#include <opencog/util/exceptions.h>
+
+using namespace opencog;
+
+class StorageAPIUTest : public CxxTest::TestSuite
+{
+private:
+	AtomSpacePtr as;
+
+public:
+	StorageAPIUTest()
+	{
+		as = createAtomSpace();
+	}
+
+	void setUp() { as->clear(); }
+	void tearDown() {}
+
+	// ===================== DispatchHash Tests =====================
+
+	void test_dispatch_hash_basic()
+	{
+		// Test that identical strings produce identical hashes
+		uint32_t h1 = dispatch_hash("test");
+		uint32_t h2 = dispatch_hash("test");
+		TS_ASSERT_EQUALS(h1, h2);
+	}
+
+	void test_dispatch_hash_different()
+	{
+		// Different strings should produce different hashes
+		uint32_t h1 = dispatch_hash("test1");
+		uint32_t h2 = dispatch_hash("test2");
+		TS_ASSERT_DIFFERS(h1, h2);
+	}
+
+	void test_dispatch_hash_empty()
+	{
+		// Empty string should produce zero hash
+		uint32_t h = dispatch_hash("");
+		TS_ASSERT_EQUALS(h, 0);
+	}
+
+	void test_dispatch_hash_single_char()
+	{
+		uint32_t h1 = dispatch_hash("a");
+		uint32_t h2 = dispatch_hash("b");
+		TS_ASSERT_DIFFERS(h1, h2);
+		TS_ASSERT(h1 != 0);
+		TS_ASSERT(h2 != 0);
+	}
+
+	void test_dispatch_hash_known_strings()
+	{
+		// Test with actual command strings used by StorageNode
+		uint32_t h_open = dispatch_hash("*-open-*");
+		uint32_t h_close = dispatch_hash("*-close-*");
+		uint32_t h_store = dispatch_hash("*-store-atom-*");
+		uint32_t h_fetch = dispatch_hash("*-fetch-atom-*");
+
+		// All should be different
+		TS_ASSERT_DIFFERS(h_open, h_close);
+		TS_ASSERT_DIFFERS(h_open, h_store);
+		TS_ASSERT_DIFFERS(h_open, h_fetch);
+		TS_ASSERT_DIFFERS(h_close, h_store);
+		TS_ASSERT_DIFFERS(h_close, h_fetch);
+		TS_ASSERT_DIFFERS(h_store, h_fetch);
+	}
+
+	void test_dispatch_hash_constexpr()
+	{
+		// Test that the hash can be computed at compile time
+		constexpr uint32_t h = dispatch_hash("compile_time");
+		TS_ASSERT(h != 0);
+	}
+
+	void test_dispatch_hash_long_string()
+	{
+		// Test with longer strings
+		uint32_t h1 = dispatch_hash("this-is-a-longer-string-for-testing");
+		uint32_t h2 = dispatch_hash("this-is-a-longer-string-for-testing");
+		TS_ASSERT_EQUALS(h1, h2);
+
+		uint32_t h3 = dispatch_hash("this-is-a-longer-string-for-testing-x");
+		TS_ASSERT_DIFFERS(h1, h3);
+	}
+
+	void test_dispatch_hash_case_sensitive()
+	{
+		uint32_t h1 = dispatch_hash("Test");
+		uint32_t h2 = dispatch_hash("test");
+		uint32_t h3 = dispatch_hash("TEST");
+
+		TS_ASSERT_DIFFERS(h1, h2);
+		TS_ASSERT_DIFFERS(h1, h3);
+		TS_ASSERT_DIFFERS(h2, h3);
+	}
+
+	void test_dispatch_hash_numeric_suffix()
+	{
+		uint32_t h1 = dispatch_hash("cmd1");
+		uint32_t h2 = dispatch_hash("cmd2");
+		uint32_t h3 = dispatch_hash("cmd10");
+
+		TS_ASSERT_DIFFERS(h1, h2);
+		TS_ASSERT_DIFFERS(h1, h3);
+		TS_ASSERT_DIFFERS(h2, h3);
+	}
+
+	void test_dispatch_hash_special_chars()
+	{
+		uint32_t h1 = dispatch_hash("*-test-*");
+		uint32_t h2 = dispatch_hash("-test-");
+		uint32_t h3 = dispatch_hash("test");
+
+		TS_ASSERT_DIFFERS(h1, h2);
+		TS_ASSERT_DIFFERS(h1, h3);
+	}
+
+	// ===================== Message Key Tests =====================
+
+	void test_message_keys_consistency()
+	{
+		// Test that message key strings hash consistently
+		const char* keys[] = {
+			"*-open-*",
+			"*-close-*",
+			"*-load-atomspace-*",
+			"*-store-atomspace-*",
+			"*-load-atoms-of-type-*",
+			"*-store-atom-*",
+			"*-store-value-*",
+			"*-update-value-*",
+			"*-fetch-atom-*",
+			"*-fetch-value-*",
+			"*-fetch-incoming-set-*",
+			"*-fetch-incoming-by-type-*",
+			"*-fetch-query-*",
+			"*-delete-*",
+			"*-delete-recursive-*",
+			"*-barrier-*"
+		};
+
+		// All hashes should be unique
+		std::set<uint32_t> hashes;
+		for (const char* key : keys) {
+			uint32_t h = dispatch_hash(key);
+			// Check that it's not already in set (i.e., no collision)
+			bool inserted = hashes.insert(h).second;
+			TS_ASSERT(inserted);
+		}
+
+		// Should have as many unique hashes as keys
+		TS_ASSERT_EQUALS(hashes.size(), sizeof(keys)/sizeof(keys[0]));
+	}
+
+	// ===================== Additional Hash Property Tests =====================
+
+	void test_dispatch_hash_deterministic()
+	{
+		// Call the hash function multiple times, verify same result
+		const char* test_str = "deterministic-test";
+		uint32_t first = dispatch_hash(test_str);
+		for (int i = 0; i < 100; i++) {
+			TS_ASSERT_EQUALS(dispatch_hash(test_str), first);
+		}
+	}
+
+	void test_dispatch_hash_avalanche()
+	{
+		// Changing one character should significantly change the hash
+		// (avalanche effect)
+		uint32_t h1 = dispatch_hash("abcdef");
+		uint32_t h2 = dispatch_hash("abcdeg");
+
+		// The hashes should differ significantly
+		// At least more than 1 bit should be different
+		uint32_t diff = h1 ^ h2;
+		int bit_count = 0;
+		while (diff) {
+			bit_count += diff & 1;
+			diff >>= 1;
+		}
+		// Expect several bits to differ due to avalanche effect
+		TS_ASSERT(bit_count > 1);
+	}
+
+	void test_dispatch_hash_prefix_suffix()
+	{
+		// Strings that share prefixes or suffixes should still be different
+		uint32_t h1 = dispatch_hash("prefix_a");
+		uint32_t h2 = dispatch_hash("prefix_b");
+		uint32_t h3 = dispatch_hash("a_suffix");
+		uint32_t h4 = dispatch_hash("b_suffix");
+
+		TS_ASSERT_DIFFERS(h1, h2);
+		TS_ASSERT_DIFFERS(h3, h4);
+	}
+
+	void test_dispatch_hash_whitespace()
+	{
+		// Whitespace should affect the hash
+		uint32_t h1 = dispatch_hash("test");
+		uint32_t h2 = dispatch_hash(" test");
+		uint32_t h3 = dispatch_hash("test ");
+		uint32_t h4 = dispatch_hash("te st");
+
+		TS_ASSERT_DIFFERS(h1, h2);
+		TS_ASSERT_DIFFERS(h1, h3);
+		TS_ASSERT_DIFFERS(h1, h4);
+	}
+
+	void test_dispatch_hash_unicode_ascii()
+	{
+		// Basic ASCII characters
+		uint32_t h = dispatch_hash("hello world 123 !@#");
+		TS_ASSERT(h != 0);
+	}
+
+	void test_dispatch_hash_distribution()
+	{
+		// Test that hashes are well-distributed across different inputs
+		std::vector<uint32_t> hashes;
+		for (int i = 0; i < 100; i++) {
+			std::string s = "test_" + std::to_string(i);
+			hashes.push_back(dispatch_hash(s.c_str()));
+		}
+
+		// Check that all hashes are unique
+		std::set<uint32_t> unique_hashes(hashes.begin(), hashes.end());
+		TS_ASSERT_EQUALS(unique_hashes.size(), hashes.size());
+	}
+};

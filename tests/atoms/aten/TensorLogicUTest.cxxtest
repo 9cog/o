@@ -1,0 +1,1504 @@
+/*
+ * tests/atoms/aten/TensorLogicUTest.cxxtest
+ *
+ * Copyright (C) 2025 OpenCog Foundation
+ * All Rights Reserved
+ *
+ * Unit tests for Tensor Logic implementation based on Pedro Domingos'
+ * Tensor Logic (https://tensor-logic.org, arXiv:2510.12269).
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License v3 as
+ * published by the Free Software Foundation and including the exceptions
+ * at http://opencog.org/wiki/Licenses
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program; if not, write to:
+ * Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
+
+#include <cmath>
+#include <opencog/atoms/aten/ATenValue.h>
+#include <opencog/atoms/aten/TensorEquation.h>
+#include <opencog/atoms/aten/TensorLogicLinks.h>
+#include <opencog/atoms/core/NumberNode.h>
+#include <opencog/atomspace/AtomSpace.h>
+
+using namespace opencog;
+
+class TensorLogicUTest : public CxxTest::TestSuite
+{
+private:
+	AtomSpacePtr _as;
+
+public:
+	void setUp()
+	{
+		_as = createAtomSpace();
+	}
+
+	void tearDown()
+	{
+		_as = nullptr;
+	}
+
+	// ========================================
+	// EinsumSpec tests
+	// ========================================
+
+	void test_einsum_spec_parse_matmul()
+	{
+		// Matrix multiplication: ij,jk->ik
+		EinsumSpec spec("ij,jk->ik");
+
+		TS_ASSERT_EQUALS(spec.notation(), "ij,jk->ik");
+		TS_ASSERT_EQUALS(spec.num_inputs(), 2);
+		TS_ASSERT(spec.has_explicit_output());
+
+		auto input_specs = spec.input_specs();
+		TS_ASSERT_EQUALS(input_specs.size(), 2);
+		TS_ASSERT_EQUALS(input_specs[0], "ij");
+		TS_ASSERT_EQUALS(input_specs[1], "jk");
+		TS_ASSERT_EQUALS(spec.output_spec(), "ik");
+
+		// j should be summed over
+		auto sum_indices = spec.sum_indices();
+		TS_ASSERT_EQUALS(sum_indices.size(), 1);
+		TS_ASSERT_EQUALS(sum_indices[0], 'j');
+	}
+
+	void test_einsum_spec_parse_trace()
+	{
+		// Trace: ii->
+		EinsumSpec spec("ii->");
+
+		TS_ASSERT_EQUALS(spec.num_inputs(), 1);
+		TS_ASSERT_EQUALS(spec.input_specs()[0], "ii");
+		TS_ASSERT_EQUALS(spec.output_spec(), "");
+
+		// i should be summed over
+		auto sum_indices = spec.sum_indices();
+		TS_ASSERT_EQUALS(sum_indices.size(), 1);
+		TS_ASSERT_EQUALS(sum_indices[0], 'i');
+	}
+
+	void test_einsum_spec_parse_outer_product()
+	{
+		// Outer product: i,j->ij
+		EinsumSpec spec("i,j->ij");
+
+		TS_ASSERT_EQUALS(spec.num_inputs(), 2);
+		TS_ASSERT_EQUALS(spec.input_specs()[0], "i");
+		TS_ASSERT_EQUALS(spec.input_specs()[1], "j");
+		TS_ASSERT_EQUALS(spec.output_spec(), "ij");
+
+		// No indices should be summed
+		auto sum_indices = spec.sum_indices();
+		TS_ASSERT_EQUALS(sum_indices.size(), 0);
+	}
+
+	void test_einsum_spec_parse_dot_product()
+	{
+		// Dot product: i,i->
+		EinsumSpec spec("i,i->");
+
+		TS_ASSERT_EQUALS(spec.num_inputs(), 2);
+		TS_ASSERT_EQUALS(spec.output_spec(), "");
+
+		auto sum_indices = spec.sum_indices();
+		TS_ASSERT_EQUALS(sum_indices.size(), 1);
+		TS_ASSERT_EQUALS(sum_indices[0], 'i');
+	}
+
+	void test_einsum_spec_parse_transpose()
+	{
+		// Transpose: ij->ji
+		EinsumSpec spec("ij->ji");
+
+		TS_ASSERT_EQUALS(spec.num_inputs(), 1);
+		TS_ASSERT_EQUALS(spec.input_specs()[0], "ij");
+		TS_ASSERT_EQUALS(spec.output_spec(), "ji");
+
+		auto sum_indices = spec.sum_indices();
+		TS_ASSERT_EQUALS(sum_indices.size(), 0);
+	}
+
+	void test_einsum_spec_parse_tensor_contraction()
+	{
+		// Tensor contraction: ijk,jkl->il
+		EinsumSpec spec("ijk,jkl->il");
+
+		TS_ASSERT_EQUALS(spec.num_inputs(), 2);
+		TS_ASSERT_EQUALS(spec.input_specs()[0], "ijk");
+		TS_ASSERT_EQUALS(spec.input_specs()[1], "jkl");
+		TS_ASSERT_EQUALS(spec.output_spec(), "il");
+
+		// j and k should be summed over
+		auto sum_indices = spec.sum_indices();
+		TS_ASSERT_EQUALS(sum_indices.size(), 2);
+	}
+
+	void test_einsum_spec_to_string()
+	{
+		EinsumSpec spec("ij,jk->ik");
+		std::string str = spec.to_string();
+		TS_ASSERT(str.find("ij,jk->ik") != std::string::npos);
+	}
+
+	// ========================================
+	// Einsum operation tests
+	// ========================================
+
+	void test_einsum_matmul()
+	{
+		// 2x3 @ 3x2 = 2x2
+		ATenValuePtr a = createATenFromVector(
+			{1.0, 2.0, 3.0, 4.0, 5.0, 6.0}, {2, 3});
+		ATenValuePtr b = createATenFromVector(
+			{1.0, 2.0, 3.0, 4.0, 5.0, 6.0}, {3, 2});
+
+		ATenValuePtr result = einsum("ij,jk->ik", {a, b});
+
+		auto shape = result->shape();
+		TS_ASSERT_EQUALS(shape.size(), 2);
+		TS_ASSERT_EQUALS(shape[0], 2);
+		TS_ASSERT_EQUALS(shape[1], 2);
+
+		auto vec = result->to_vector();
+		// Expected: [[22, 28], [49, 64]]
+		TS_ASSERT_DELTA(vec[0], 22.0, 1e-10);
+		TS_ASSERT_DELTA(vec[1], 28.0, 1e-10);
+		TS_ASSERT_DELTA(vec[2], 49.0, 1e-10);
+		TS_ASSERT_DELTA(vec[3], 64.0, 1e-10);
+	}
+
+	void test_einsum_trace()
+	{
+		// 3x3 matrix trace
+		ATenValuePtr a = createATenFromVector(
+			{1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0}, {3, 3});
+
+		ATenValuePtr result = einsum("ii->", {a});
+
+		// Trace = 1 + 5 + 9 = 15
+		TS_ASSERT_DELTA(result->item(), 15.0, 1e-10);
+	}
+
+	void test_einsum_outer_product()
+	{
+		ATenValuePtr a = createATenFromVector({1.0, 2.0}, {2});
+		ATenValuePtr b = createATenFromVector({3.0, 4.0, 5.0}, {3});
+
+		ATenValuePtr result = einsum("i,j->ij", {a, b});
+
+		auto shape = result->shape();
+		TS_ASSERT_EQUALS(shape[0], 2);
+		TS_ASSERT_EQUALS(shape[1], 3);
+
+		auto vec = result->to_vector();
+		// Expected: [[3, 4, 5], [6, 8, 10]]
+		TS_ASSERT_DELTA(vec[0], 3.0, 1e-10);
+		TS_ASSERT_DELTA(vec[1], 4.0, 1e-10);
+		TS_ASSERT_DELTA(vec[2], 5.0, 1e-10);
+		TS_ASSERT_DELTA(vec[3], 6.0, 1e-10);
+		TS_ASSERT_DELTA(vec[4], 8.0, 1e-10);
+		TS_ASSERT_DELTA(vec[5], 10.0, 1e-10);
+	}
+
+	void test_einsum_dot_product()
+	{
+		ATenValuePtr a = createATenFromVector({1.0, 2.0, 3.0}, {3});
+		ATenValuePtr b = createATenFromVector({4.0, 5.0, 6.0}, {3});
+
+		ATenValuePtr result = einsum("i,i->", {a, b});
+
+		// Dot = 1*4 + 2*5 + 3*6 = 32
+		TS_ASSERT_DELTA(result->item(), 32.0, 1e-10);
+	}
+
+	void test_einsum_batch_matmul()
+	{
+		// Batch matrix multiply: bij,bjk->bik (batch of 2)
+		ATenValuePtr a = createATenFromVector(
+			{1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0}, {2, 2, 2});
+		ATenValuePtr b = createATenFromVector(
+			{1.0, 0.0, 0.0, 1.0, 2.0, 0.0, 0.0, 2.0}, {2, 2, 2});
+
+		ATenValuePtr result = einsum("bij,bjk->bik", {a, b});
+
+		auto shape = result->shape();
+		TS_ASSERT_EQUALS(shape.size(), 3);
+		TS_ASSERT_EQUALS(shape[0], 2);  // batch
+		TS_ASSERT_EQUALS(shape[1], 2);  // rows
+		TS_ASSERT_EQUALS(shape[2], 2);  // cols
+	}
+
+	// ========================================
+	// Nonlinearity tests
+	// ========================================
+
+	void test_nonlinearity_threshold()
+	{
+		ATenValuePtr a = createATenFromVector(
+			{0.0, 0.4, 0.5, 0.6, 1.0}, {5});
+
+		ATenValuePtr result = apply_nonlinearity(a, Nonlinearity::THRESHOLD);
+
+		auto vec = result->to_vector();
+		TS_ASSERT_DELTA(vec[0], 0.0, 1e-10);  // 0.0 <= 0.5
+		TS_ASSERT_DELTA(vec[1], 0.0, 1e-10);  // 0.4 <= 0.5
+		TS_ASSERT_DELTA(vec[2], 0.0, 1e-10);  // 0.5 <= 0.5
+		TS_ASSERT_DELTA(vec[3], 1.0, 1e-10);  // 0.6 > 0.5
+		TS_ASSERT_DELTA(vec[4], 1.0, 1e-10);  // 1.0 > 0.5
+	}
+
+	void test_nonlinearity_sigmoid()
+	{
+		ATenValuePtr a = createATenFromVector({0.0}, {1});
+
+		ATenValuePtr result = apply_nonlinearity(a, Nonlinearity::SIGMOID);
+
+		TS_ASSERT_DELTA(result->item(), 0.5, 1e-10);
+	}
+
+	void test_nonlinearity_relu()
+	{
+		ATenValuePtr a = createATenFromVector(
+			{-2.0, -1.0, 0.0, 1.0, 2.0}, {5});
+
+		ATenValuePtr result = apply_nonlinearity(a, Nonlinearity::RELU);
+
+		auto vec = result->to_vector();
+		TS_ASSERT_DELTA(vec[0], 0.0, 1e-10);
+		TS_ASSERT_DELTA(vec[1], 0.0, 1e-10);
+		TS_ASSERT_DELTA(vec[2], 0.0, 1e-10);
+		TS_ASSERT_DELTA(vec[3], 1.0, 1e-10);
+		TS_ASSERT_DELTA(vec[4], 2.0, 1e-10);
+	}
+
+	void test_nonlinearity_clamp01()
+	{
+		ATenValuePtr a = createATenFromVector(
+			{-0.5, 0.0, 0.5, 1.0, 1.5}, {5});
+
+		ATenValuePtr result = apply_nonlinearity(a, Nonlinearity::CLAMP01);
+
+		auto vec = result->to_vector();
+		TS_ASSERT_DELTA(vec[0], 0.0, 1e-10);  // clamped to 0
+		TS_ASSERT_DELTA(vec[1], 0.0, 1e-10);
+		TS_ASSERT_DELTA(vec[2], 0.5, 1e-10);
+		TS_ASSERT_DELTA(vec[3], 1.0, 1e-10);
+		TS_ASSERT_DELTA(vec[4], 1.0, 1e-10);  // clamped to 1
+	}
+
+	void test_nonlinearity_none()
+	{
+		ATenValuePtr a = createATenFromVector({1.5, 2.5, 3.5}, {3});
+
+		ATenValuePtr result = apply_nonlinearity(a, Nonlinearity::NONE);
+
+		auto vec = result->to_vector();
+		TS_ASSERT_DELTA(vec[0], 1.5, 1e-10);
+		TS_ASSERT_DELTA(vec[1], 2.5, 1e-10);
+		TS_ASSERT_DELTA(vec[2], 3.5, 1e-10);
+	}
+
+	// ========================================
+	// TensorEquation tests
+	// ========================================
+
+	void test_tensor_equation_create()
+	{
+		TensorEquation eq("grandparent_rule",
+		                  "grandparent",
+		                  {"parent", "parent"},
+		                  "ij,jk->ik",
+		                  Nonlinearity::THRESHOLD,
+		                  ReasoningMode::BOOLEAN);
+
+		TS_ASSERT_EQUALS(eq.name(), "grandparent_rule");
+		TS_ASSERT_EQUALS(eq.lhs_name(), "grandparent");
+		TS_ASSERT_EQUALS(eq.rhs_names().size(), 2);
+		TS_ASSERT_EQUALS(eq.rhs_names()[0], "parent");
+		TS_ASSERT_EQUALS(eq.rhs_names()[1], "parent");
+		TS_ASSERT_EQUALS(eq.nonlinearity(), Nonlinearity::THRESHOLD);
+		TS_ASSERT_EQUALS(eq.mode(), ReasoningMode::BOOLEAN);
+	}
+
+	void test_tensor_equation_execute_matmul()
+	{
+		TensorEquation eq("mm_rule", "C", {"A", "B"},
+		                  "ij,jk->ik", Nonlinearity::NONE);
+
+		ATenValuePtr a = createATenFromVector(
+			{1.0, 2.0, 3.0, 4.0, 5.0, 6.0}, {2, 3});
+		ATenValuePtr b = createATenFromVector(
+			{1.0, 2.0, 3.0, 4.0, 5.0, 6.0}, {3, 2});
+
+		std::map<std::string, ATenValuePtr> inputs;
+		inputs["A"] = a;
+		inputs["B"] = b;
+
+		ATenValuePtr result = eq.execute(inputs);
+
+		auto vec = result->to_vector();
+		TS_ASSERT_DELTA(vec[0], 22.0, 1e-10);
+		TS_ASSERT_DELTA(vec[1], 28.0, 1e-10);
+		TS_ASSERT_DELTA(vec[2], 49.0, 1e-10);
+		TS_ASSERT_DELTA(vec[3], 64.0, 1e-10);
+	}
+
+	void test_tensor_equation_execute_with_threshold()
+	{
+		// grandparent[i,k] = threshold(sum_j parent[i,j] * parent[j,k])
+		TensorEquation eq("gp_rule", "grandparent", {"parent", "parent"},
+		                  "ij,jk->ik", Nonlinearity::THRESHOLD,
+		                  ReasoningMode::BOOLEAN);
+
+		// parent relation: 0->1, 1->2
+		// [[0,1,0], [0,0,1], [0,0,0]]
+		ATenValuePtr parent = createATenFromVector(
+			{0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0}, {3, 3});
+
+		std::map<std::string, ATenValuePtr> inputs;
+		inputs["parent"] = parent;
+
+		ATenValuePtr result = eq.execute(inputs);
+
+		auto vec = result->to_vector();
+		// grandparent: 0->2 (via 1)
+		// Expected: [[0,0,1], [0,0,0], [0,0,0]]
+		TS_ASSERT_DELTA(vec[0], 0.0, 1e-10);  // [0,0]
+		TS_ASSERT_DELTA(vec[1], 0.0, 1e-10);  // [0,1]
+		TS_ASSERT_DELTA(vec[2], 1.0, 1e-10);  // [0,2] = parent[0,1] * parent[1,2]
+	}
+
+	void test_tensor_equation_to_string()
+	{
+		TensorEquation eq("test", "out", {"in1", "in2"},
+		                  "ij,jk->ik");
+
+		std::string str = eq.to_string();
+		TS_ASSERT(str.find("test") != std::string::npos);
+		TS_ASSERT(str.find("out") != std::string::npos);
+	}
+
+	// ========================================
+	// TensorProgram tests
+	// ========================================
+
+	void test_tensor_program_create()
+	{
+		TensorProgram prog("family");
+
+		TS_ASSERT_EQUALS(prog.name(), "family");
+		TS_ASSERT_EQUALS(prog.num_facts(), 0);
+		TS_ASSERT_EQUALS(prog.num_equations(), 0);
+	}
+
+	void test_tensor_program_add_fact()
+	{
+		TensorProgram prog("test");
+
+		ATenValuePtr tensor = createATenFromVector({1.0, 2.0, 3.0}, {3});
+		prog.add_fact("my_fact", tensor);
+
+		TS_ASSERT(prog.has_fact("my_fact"));
+		TS_ASSERT_EQUALS(prog.num_facts(), 1);
+
+		ATenValuePtr retrieved = prog.get_fact("my_fact");
+		TS_ASSERT(*tensor == *retrieved);
+	}
+
+	void test_tensor_program_add_equation()
+	{
+		TensorProgram prog("test");
+
+		prog.add_equation("eq1", "out", {"in1", "in2"},
+		                  "ij,jk->ik", Nonlinearity::NONE);
+
+		TS_ASSERT_EQUALS(prog.num_equations(), 1);
+
+		TensorEquationPtr eq = prog.get_equation("eq1");
+		TS_ASSERT(eq != nullptr);
+		TS_ASSERT_EQUALS(eq->name(), "eq1");
+	}
+
+	void test_tensor_program_forward()
+	{
+		TensorProgram prog("family");
+
+		// Add parent fact (3 entities)
+		// parent relation: 0->1, 1->2
+		ATenValuePtr parent = createATenFromVector(
+			{0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0}, {3, 3});
+		prog.add_fact("parent", parent);
+
+		// Add grandparent equation
+		prog.add_equation("gp_rule", "grandparent", {"parent", "parent"},
+		                  "ij,jk->ik", Nonlinearity::THRESHOLD);
+
+		// Execute forward
+		prog.forward();
+
+		// Check derived grandparent
+		ATenValuePtr gp = prog.get_derived("grandparent");
+		TS_ASSERT(gp != nullptr);
+
+		auto vec = gp->to_vector();
+		// grandparent: 0->2
+		TS_ASSERT_DELTA(vec[2], 1.0, 1e-10);  // [0,2]
+	}
+
+	void test_tensor_program_forward_to_fixpoint()
+	{
+		TensorProgram prog("transitive");
+
+		// Transitive closure: connected[i,k] = edge[i,k] OR sum_j edge[i,j]*connected[j,k]
+		// For simplicity, test with a chain: 0->1->2->3
+
+		ATenValuePtr edge = createATenFromVector({
+			0.0, 1.0, 0.0, 0.0,
+			0.0, 0.0, 1.0, 0.0,
+			0.0, 0.0, 0.0, 1.0,
+			0.0, 0.0, 0.0, 0.0
+		}, {4, 4});
+		prog.add_fact("edge", edge);
+		prog.add_fact("connected", edge);  // Initialize with edges
+
+		// Add recursive equation
+		prog.add_equation("tc_rule", "connected", {"edge", "connected"},
+		                  "ij,jk->ik", Nonlinearity::CLAMP01);
+
+		// Run to fixpoint
+		prog.forward_to_fixpoint();
+
+		ATenValuePtr conn = prog.get_tensor("connected");
+		TS_ASSERT(conn != nullptr);
+	}
+
+	void test_tensor_program_query()
+	{
+		TensorProgram prog("test");
+
+		ATenValuePtr data = createATenFromVector(
+			{1.0, 2.0, 3.0, 4.0}, {2, 2});
+		prog.add_fact("relation", data);
+
+		ATenValuePtr result = prog.query("relation");
+		TS_ASSERT(result != nullptr);
+		TS_ASSERT(*result == *data);
+	}
+
+	void test_tensor_program_clear()
+	{
+		TensorProgram prog("test");
+
+		ATenValuePtr t1 = createATenFromVector({1.0}, {1});
+		ATenValuePtr t2 = createATenFromVector({2.0}, {1});
+
+		prog.add_fact("f1", t1);
+		prog.add_fact("f2", t2);
+
+		TS_ASSERT_EQUALS(prog.num_facts(), 2);
+
+		prog.clear_facts();
+
+		TS_ASSERT_EQUALS(prog.num_facts(), 0);
+	}
+
+	void test_tensor_program_to_string()
+	{
+		TensorProgram prog("test_prog");
+
+		ATenValuePtr t = createATenFromVector({1.0}, {1});
+		prog.add_fact("fact1", t);
+		prog.add_equation("eq1", "out", {"in"}, "i->i");
+
+		std::string str = prog.to_string();
+		TS_ASSERT(str.find("test_prog") != std::string::npos);
+	}
+
+	void test_tensor_program_reasoning_mode()
+	{
+		TensorProgram prog("test", ReasoningMode::BOOLEAN);
+
+		TS_ASSERT_EQUALS(prog.mode(), ReasoningMode::BOOLEAN);
+
+		prog.set_mode(ReasoningMode::CONTINUOUS);
+		TS_ASSERT_EQUALS(prog.mode(), ReasoningMode::CONTINUOUS);
+	}
+
+	// ========================================
+	// Boolean vs Continuous mode tests
+	// ========================================
+
+	void test_boolean_mode_strict()
+	{
+		// Boolean mode: values are strictly 0 or 1
+		TensorEquation eq("bool_rule", "out", {"in1", "in2"},
+		                  "ij,jk->ik", Nonlinearity::THRESHOLD,
+		                  ReasoningMode::BOOLEAN);
+
+		// Continuous values
+		ATenValuePtr a = createATenFromVector(
+			{0.0, 0.7, 0.0, 0.8}, {2, 2});
+		ATenValuePtr b = createATenFromVector(
+			{0.6, 0.0, 0.9, 0.0}, {2, 2});
+
+		std::map<std::string, ATenValuePtr> inputs;
+		inputs["in1"] = a;
+		inputs["in2"] = b;
+
+		ATenValuePtr result = eq.execute(inputs);
+
+		// Result should be 0 or 1 only
+		auto vec = result->to_vector();
+		for (double v : vec) {
+			TS_ASSERT(v == 0.0 || v == 1.0);
+		}
+	}
+
+	void test_continuous_mode_smooth()
+	{
+		// Continuous mode: values are in [0, 1]
+		TensorEquation eq("cont_rule", "out", {"in1", "in2"},
+		                  "ij,jk->ik", Nonlinearity::SIGMOID,
+		                  ReasoningMode::CONTINUOUS);
+
+		ATenValuePtr a = createATenFromVector({0.5, 0.5, 0.5, 0.5}, {2, 2});
+		ATenValuePtr b = createATenFromVector({0.5, 0.5, 0.5, 0.5}, {2, 2});
+
+		std::map<std::string, ATenValuePtr> inputs;
+		inputs["in1"] = a;
+		inputs["in2"] = b;
+
+		ATenValuePtr result = eq.execute(inputs);
+
+		// Result should be smooth values
+		auto vec = result->to_vector();
+		for (double v : vec) {
+			TS_ASSERT(v >= 0.0 && v <= 1.0);
+		}
+	}
+
+	// ========================================
+	// Datalog parsing tests
+	// ========================================
+
+	void test_parse_datalog_simple()
+	{
+		TensorEquationPtr eq = parse_datalog_rule(
+			"grandparent(X,Z) :- parent(X,Y), parent(Y,Z).");
+
+		TS_ASSERT(eq != nullptr);
+		TS_ASSERT_EQUALS(eq->lhs_name(), "grandparent");
+		TS_ASSERT_EQUALS(eq->rhs_names().size(), 2);
+		TS_ASSERT_EQUALS(eq->rhs_names()[0], "parent");
+		TS_ASSERT_EQUALS(eq->rhs_names()[1], "parent");
+	}
+
+	void test_parse_datalog_single_body()
+	{
+		TensorEquationPtr eq = parse_datalog_rule(
+			"ancestor(X,Y) :- parent(X,Y).");
+
+		TS_ASSERT(eq != nullptr);
+		TS_ASSERT_EQUALS(eq->lhs_name(), "ancestor");
+		TS_ASSERT_EQUALS(eq->rhs_names().size(), 1);
+		TS_ASSERT_EQUALS(eq->rhs_names()[0], "parent");
+	}
+
+	// ========================================
+	// Learning tests
+	// ========================================
+
+	void test_tensor_program_learning_rate()
+	{
+		TensorProgram prog("learnable");
+
+		TS_ASSERT_DELTA(prog.learning_rate(), 0.01, 1e-10);
+
+		prog.set_learning_rate(0.1);
+		TS_ASSERT_DELTA(prog.learning_rate(), 0.1, 1e-10);
+	}
+
+	void test_tensor_program_gradient_tracking()
+	{
+		TensorProgram prog("learnable");
+
+		TS_ASSERT(!prog.track_gradients());
+
+		prog.set_track_gradients(true);
+		TS_ASSERT(prog.track_gradients());
+	}
+
+	// ========================================
+	// Learnable equation tests
+	// ========================================
+
+	void test_tensor_equation_learnable()
+	{
+		TensorEquation eq("learnable_rule", "out", {"in"},
+		                  "i->i", Nonlinearity::SIGMOID,
+		                  ReasoningMode::CONTINUOUS);
+
+		TS_ASSERT(!eq.is_learnable());
+
+		eq.set_learnable(true);
+		TS_ASSERT(eq.is_learnable());
+
+		ATenValuePtr weight = createATenFromVector({0.5}, {1});
+		eq.set_weight(weight);
+
+		TS_ASSERT(eq.weight() != nullptr);
+	}
+
+	// ========================================
+	// Integration tests
+	// ========================================
+
+	void test_family_reasoning_example()
+	{
+		// Classic family reasoning example
+		// parent(alice, bob), parent(bob, charlie)
+		// grandparent(X,Z) :- parent(X,Y), parent(Y,Z)
+		// => grandparent(alice, charlie)
+
+		TensorProgram prog("family_reasoning", ReasoningMode::BOOLEAN);
+
+		// Create parent tensor for 3 entities: alice=0, bob=1, charlie=2
+		// parent[0,1] = 1 (alice is parent of bob)
+		// parent[1,2] = 1 (bob is parent of charlie)
+		ATenValuePtr parent = createATenFromVector({
+			0.0, 1.0, 0.0,  // alice -> bob
+			0.0, 0.0, 1.0,  // bob -> charlie
+			0.0, 0.0, 0.0   // charlie -> nobody
+		}, {3, 3});
+
+		prog.add_fact("parent", parent);
+
+		// Add grandparent rule
+		prog.add_equation("gp", "grandparent", {"parent", "parent"},
+		                  "ij,jk->ik", Nonlinearity::THRESHOLD);
+
+		// Run forward inference
+		prog.forward();
+
+		// Query grandparent relation
+		ATenValuePtr gp = prog.get_derived("grandparent");
+		TS_ASSERT(gp != nullptr);
+
+		auto vec = gp->to_vector();
+		// grandparent[0,2] should be 1 (alice is grandparent of charlie)
+		TS_ASSERT_DELTA(vec[2], 1.0, 1e-10);  // position [0,2]
+
+		// Other grandparent positions should be 0
+		TS_ASSERT_DELTA(vec[0], 0.0, 1e-10);
+		TS_ASSERT_DELTA(vec[1], 0.0, 1e-10);
+		TS_ASSERT_DELTA(vec[3], 0.0, 1e-10);
+	}
+
+	void test_multi_hop_reasoning()
+	{
+		// Test reasoning with multiple hops
+		// A -> B -> C -> D
+		// We want to find 2-hop connections
+
+		TensorProgram prog("multi_hop", ReasoningMode::BOOLEAN);
+
+		ATenValuePtr edge = createATenFromVector({
+			0.0, 1.0, 0.0, 0.0,  // A -> B
+			0.0, 0.0, 1.0, 0.0,  // B -> C
+			0.0, 0.0, 0.0, 1.0,  // C -> D
+			0.0, 0.0, 0.0, 0.0   // D -> nobody
+		}, {4, 4});
+
+		prog.add_fact("edge", edge);
+		prog.add_equation("2hop", "two_hop", {"edge", "edge"},
+		                  "ij,jk->ik", Nonlinearity::THRESHOLD);
+
+		prog.forward();
+
+		ATenValuePtr twohop = prog.get_derived("two_hop");
+		auto vec = twohop->to_vector();
+
+		// Two-hop: A->C (via B), B->D (via C)
+		TS_ASSERT_DELTA(vec[2], 1.0, 1e-10);   // [0,2]: A->C
+		TS_ASSERT_DELTA(vec[7], 1.0, 1e-10);   // [1,3]: B->D
+	}
+
+	// ========================================
+	// Additional ATenValue Operation Tests
+	// ========================================
+
+	void test_aten_scalar_creation()
+	{
+		ATenValuePtr scalar = createATenFromVector({42.0}, {});
+		TS_ASSERT_EQUALS(scalar->ndim(), 0);
+		TS_ASSERT_EQUALS(scalar->numel(), 1);
+		TS_ASSERT_DELTA(scalar->item(), 42.0, 1e-10);
+	}
+
+	void test_aten_1d_tensor()
+	{
+		ATenValuePtr vec = createATenFromVector({1.0, 2.0, 3.0, 4.0, 5.0}, {5});
+		TS_ASSERT_EQUALS(vec->ndim(), 1);
+		TS_ASSERT_EQUALS(vec->numel(), 5);
+		TS_ASSERT_EQUALS(vec->shape()[0], 5);
+	}
+
+	void test_aten_3d_tensor()
+	{
+		ATenValuePtr t3d = createATenFromVector(
+			{1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0}, {2, 2, 2});
+		TS_ASSERT_EQUALS(t3d->ndim(), 3);
+		TS_ASSERT_EQUALS(t3d->numel(), 8);
+		TS_ASSERT_EQUALS(t3d->shape()[0], 2);
+		TS_ASSERT_EQUALS(t3d->shape()[1], 2);
+		TS_ASSERT_EQUALS(t3d->shape()[2], 2);
+	}
+
+	void test_aten_tanh()
+	{
+		ATenValuePtr a = createATenFromVector({0.0}, {1});
+		ATenValuePtr result = ATenValueCast(a->tanh());
+		TS_ASSERT_DELTA(result->item(), 0.0, 1e-10);
+	}
+
+	void test_aten_div()
+	{
+		ATenValuePtr a = createATenFromVector({10.0, 20.0, 30.0}, {3});
+		ATenValuePtr b = createATenFromVector({2.0, 4.0, 5.0}, {3});
+		ATenValuePtr result = ATenValueCast(a->div(*b));
+		auto vec = result->to_vector();
+		TS_ASSERT_DELTA(vec[0], 5.0, 1e-10);
+		TS_ASSERT_DELTA(vec[1], 5.0, 1e-10);
+		TS_ASSERT_DELTA(vec[2], 6.0, 1e-10);
+	}
+
+	void test_aten_softmax()
+	{
+		ATenValuePtr a = createATenFromVector({1.0, 2.0, 3.0}, {3});
+		ATenValuePtr result = ATenValueCast(a->softmax(0));
+
+		auto vec = result->to_vector();
+		double sum = vec[0] + vec[1] + vec[2];
+		TS_ASSERT_DELTA(sum, 1.0, 1e-10);  // Softmax sums to 1
+
+		// Values should be ordered: vec[2] > vec[1] > vec[0]
+		TS_ASSERT(vec[2] > vec[1]);
+		TS_ASSERT(vec[1] > vec[0]);
+	}
+
+	void test_aten_add_sub()
+	{
+		ATenValuePtr a = createATenFromVector({1.0, 2.0, 3.0}, {3});
+		ATenValuePtr b = createATenFromVector({4.0, 5.0, 6.0}, {3});
+
+		ATenValuePtr sum_result = ATenValueCast(a->add(*b));
+		auto vec1 = sum_result->to_vector();
+		TS_ASSERT_DELTA(vec1[0], 5.0, 1e-10);
+		TS_ASSERT_DELTA(vec1[1], 7.0, 1e-10);
+		TS_ASSERT_DELTA(vec1[2], 9.0, 1e-10);
+
+		ATenValuePtr sub_result = ATenValueCast(a->sub(*b));
+		auto vec2 = sub_result->to_vector();
+		TS_ASSERT_DELTA(vec2[0], -3.0, 1e-10);
+		TS_ASSERT_DELTA(vec2[1], -3.0, 1e-10);
+		TS_ASSERT_DELTA(vec2[2], -3.0, 1e-10);
+	}
+
+	void test_aten_transpose()
+	{
+		ATenValuePtr a = createATenFromVector({1.0, 2.0, 3.0, 4.0, 5.0, 6.0}, {2, 3});
+		ATenValuePtr result = ATenValueCast(a->transpose(0, 1));
+
+		auto shape = result->shape();
+		TS_ASSERT_EQUALS(shape[0], 3);
+		TS_ASSERT_EQUALS(shape[1], 2);
+
+		auto vec = result->to_vector();
+		TS_ASSERT_DELTA(vec[0], 1.0, 1e-10);
+		TS_ASSERT_DELTA(vec[1], 4.0, 1e-10);
+		TS_ASSERT_DELTA(vec[2], 2.0, 1e-10);
+		TS_ASSERT_DELTA(vec[3], 5.0, 1e-10);
+	}
+
+	void test_aten_reshape()
+	{
+		ATenValuePtr a = createATenFromVector({1.0, 2.0, 3.0, 4.0, 5.0, 6.0}, {2, 3});
+		ATenValuePtr result = ATenValueCast(a->reshape({3, 2}));
+
+		auto shape = result->shape();
+		TS_ASSERT_EQUALS(shape[0], 3);
+		TS_ASSERT_EQUALS(shape[1], 2);
+		TS_ASSERT_EQUALS(result->numel(), 6);
+	}
+
+	void test_aten_mean()
+	{
+		ATenValuePtr a = createATenFromVector({1.0, 2.0, 3.0, 4.0}, {4});
+		ATenValuePtr result = ATenValueCast(a->mean());
+		TS_ASSERT_DELTA(result->item(), 2.5, 1e-10);
+	}
+
+	void test_aten_relu()
+	{
+		ATenValuePtr a = createATenFromVector({-2.0, -1.0, 0.0, 1.0, 2.0}, {5});
+		ATenValuePtr result = ATenValueCast(a->relu());
+		auto vec = result->to_vector();
+		TS_ASSERT_DELTA(vec[0], 0.0, 1e-10);
+		TS_ASSERT_DELTA(vec[1], 0.0, 1e-10);
+		TS_ASSERT_DELTA(vec[2], 0.0, 1e-10);
+		TS_ASSERT_DELTA(vec[3], 1.0, 1e-10);
+		TS_ASSERT_DELTA(vec[4], 2.0, 1e-10);
+	}
+
+	void test_aten_sigmoid()
+	{
+		ATenValuePtr a = createATenFromVector({0.0}, {1});
+		ATenValuePtr result = ATenValueCast(a->sigmoid());
+		TS_ASSERT_DELTA(result->item(), 0.5, 1e-10);
+	}
+
+	void test_aten_matmul()
+	{
+		ATenValuePtr a = createATenFromVector({1.0, 2.0, 3.0, 4.0}, {2, 2});
+		ATenValuePtr b = createATenFromVector({5.0, 6.0, 7.0, 8.0}, {2, 2});
+		ATenValuePtr result = ATenValueCast(a->matmul(*b));
+
+		auto vec = result->to_vector();
+		// [[1,2],[3,4]] @ [[5,6],[7,8]] = [[19,22],[43,50]]
+		TS_ASSERT_DELTA(vec[0], 19.0, 1e-10);
+		TS_ASSERT_DELTA(vec[1], 22.0, 1e-10);
+		TS_ASSERT_DELTA(vec[2], 43.0, 1e-10);
+		TS_ASSERT_DELTA(vec[3], 50.0, 1e-10);
+	}
+
+	// ========================================
+	// Additional EinsumSpec Tests
+	// ========================================
+
+	void test_einsum_spec_implicit_output()
+	{
+		// Implicit output notation (no ->)
+		EinsumSpec spec("ij,jk");
+		TS_ASSERT(!spec.has_explicit_output());
+		TS_ASSERT_EQUALS(spec.num_inputs(), 2);
+	}
+
+	void test_einsum_spec_single_tensor_sum()
+	{
+		EinsumSpec spec("ij->");
+		TS_ASSERT_EQUALS(spec.num_inputs(), 1);
+		TS_ASSERT_EQUALS(spec.output_spec(), "");
+
+		auto sum_indices = spec.sum_indices();
+		TS_ASSERT_EQUALS(sum_indices.size(), 2);
+	}
+
+	void test_einsum_spec_batch_matmul()
+	{
+		EinsumSpec spec("bij,bjk->bik");
+		TS_ASSERT_EQUALS(spec.num_inputs(), 2);
+		TS_ASSERT_EQUALS(spec.input_specs()[0], "bij");
+		TS_ASSERT_EQUALS(spec.input_specs()[1], "bjk");
+		TS_ASSERT_EQUALS(spec.output_spec(), "bik");
+
+		// j is summed, b and i,k are kept
+		auto sum_indices = spec.sum_indices();
+		TS_ASSERT_EQUALS(sum_indices.size(), 1);
+		TS_ASSERT_EQUALS(sum_indices[0], 'j');
+	}
+
+	void test_einsum_spec_diagonal()
+	{
+		EinsumSpec spec("ii->i");
+		TS_ASSERT_EQUALS(spec.num_inputs(), 1);
+		TS_ASSERT_EQUALS(spec.output_spec(), "i");
+		TS_ASSERT_EQUALS(spec.sum_indices().size(), 0);
+	}
+
+	void test_einsum_spec_three_inputs()
+	{
+		EinsumSpec spec("ij,jk,kl->il");
+		TS_ASSERT_EQUALS(spec.num_inputs(), 3);
+		TS_ASSERT_EQUALS(spec.input_specs()[0], "ij");
+		TS_ASSERT_EQUALS(spec.input_specs()[1], "jk");
+		TS_ASSERT_EQUALS(spec.input_specs()[2], "kl");
+	}
+
+	void test_einsum_spec_validate()
+	{
+		EinsumSpec spec("ij,jk->ik");
+
+		ATenValuePtr a = createATenFromVector({1.0, 2.0, 3.0, 4.0, 5.0, 6.0}, {2, 3});
+		ATenValuePtr b = createATenFromVector({1.0, 2.0, 3.0, 4.0, 5.0, 6.0}, {3, 2});
+
+		TS_ASSERT(spec.validate({a, b}));
+	}
+
+	void test_einsum_spec_output_shape()
+	{
+		EinsumSpec spec("ij,jk->ik");
+
+		ATenValuePtr a = createATenFromVector({1.0, 2.0, 3.0, 4.0, 5.0, 6.0}, {2, 3});
+		ATenValuePtr b = createATenFromVector({1.0, 2.0, 3.0, 4.0, 5.0, 6.0}, {3, 2});
+
+		auto shape = spec.output_shape({a, b});
+		TS_ASSERT_EQUALS(shape.size(), 2);
+		TS_ASSERT_EQUALS(shape[0], 2);
+		TS_ASSERT_EQUALS(shape[1], 2);
+	}
+
+	// ========================================
+	// Additional Einsum Operation Tests
+	// ========================================
+
+	void test_einsum_sum_all()
+	{
+		ATenValuePtr a = createATenFromVector({1.0, 2.0, 3.0, 4.0}, {2, 2});
+		ATenValuePtr result = einsum("ij->", {a});
+		TS_ASSERT_DELTA(result->item(), 10.0, 1e-10);
+	}
+
+	void test_einsum_row_sum()
+	{
+		ATenValuePtr a = createATenFromVector({1.0, 2.0, 3.0, 4.0, 5.0, 6.0}, {2, 3});
+		ATenValuePtr result = einsum("ij->i", {a});
+
+		auto vec = result->to_vector();
+		TS_ASSERT_EQUALS(vec.size(), 2);
+		TS_ASSERT_DELTA(vec[0], 6.0, 1e-10);   // 1+2+3
+		TS_ASSERT_DELTA(vec[1], 15.0, 1e-10);  // 4+5+6
+	}
+
+	void test_einsum_col_sum()
+	{
+		ATenValuePtr a = createATenFromVector({1.0, 2.0, 3.0, 4.0, 5.0, 6.0}, {2, 3});
+		ATenValuePtr result = einsum("ij->j", {a});
+
+		auto vec = result->to_vector();
+		TS_ASSERT_EQUALS(vec.size(), 3);
+		TS_ASSERT_DELTA(vec[0], 5.0, 1e-10);   // 1+4
+		TS_ASSERT_DELTA(vec[1], 7.0, 1e-10);   // 2+5
+		TS_ASSERT_DELTA(vec[2], 9.0, 1e-10);   // 3+6
+	}
+
+	void test_einsum_matrix_vector()
+	{
+		ATenValuePtr m = createATenFromVector({1.0, 2.0, 3.0, 4.0, 5.0, 6.0}, {2, 3});
+		ATenValuePtr v = createATenFromVector({1.0, 1.0, 1.0}, {3});
+
+		ATenValuePtr result = einsum("ij,j->i", {m, v});
+
+		auto vec = result->to_vector();
+		TS_ASSERT_EQUALS(vec.size(), 2);
+		TS_ASSERT_DELTA(vec[0], 6.0, 1e-10);   // 1+2+3
+		TS_ASSERT_DELTA(vec[1], 15.0, 1e-10);  // 4+5+6
+	}
+
+	void test_einsum_hadamard()
+	{
+		ATenValuePtr a = createATenFromVector({1.0, 2.0, 3.0}, {3});
+		ATenValuePtr b = createATenFromVector({4.0, 5.0, 6.0}, {3});
+
+		ATenValuePtr result = einsum("i,i->i", {a, b});
+
+		auto vec = result->to_vector();
+		TS_ASSERT_DELTA(vec[0], 4.0, 1e-10);
+		TS_ASSERT_DELTA(vec[1], 10.0, 1e-10);
+		TS_ASSERT_DELTA(vec[2], 18.0, 1e-10);
+	}
+
+	// ========================================
+	// Additional Nonlinearity Tests
+	// ========================================
+
+	void test_nonlinearity_tanh()
+	{
+		ATenValuePtr a = createATenFromVector({0.0, 1.0, -1.0}, {3});
+		ATenValuePtr result = apply_nonlinearity(a, Nonlinearity::TANH);
+
+		auto vec = result->to_vector();
+		TS_ASSERT_DELTA(vec[0], 0.0, 1e-10);
+		TS_ASSERT_DELTA(vec[1], std::tanh(1.0), 1e-10);
+		TS_ASSERT_DELTA(vec[2], std::tanh(-1.0), 1e-10);
+	}
+
+	void test_nonlinearity_exp()
+	{
+		ATenValuePtr a = createATenFromVector({0.0, 1.0}, {2});
+		ATenValuePtr result = apply_nonlinearity(a, Nonlinearity::EXP);
+
+		auto vec = result->to_vector();
+		TS_ASSERT_DELTA(vec[0], 1.0, 1e-10);
+		TS_ASSERT_DELTA(vec[1], std::exp(1.0), 1e-10);
+	}
+
+	void test_nonlinearity_log()
+	{
+		ATenValuePtr a = createATenFromVector({1.0, std::exp(1.0)}, {2});
+		ATenValuePtr result = apply_nonlinearity(a, Nonlinearity::LOG);
+
+		auto vec = result->to_vector();
+		TS_ASSERT_DELTA(vec[0], 0.0, 1e-10);
+		TS_ASSERT_DELTA(vec[1], 1.0, 1e-10);
+	}
+
+	void test_nonlinearity_softmax()
+	{
+		ATenValuePtr a = createATenFromVector({1.0, 2.0, 3.0}, {3});
+		ATenValuePtr result = apply_nonlinearity(a, Nonlinearity::SOFTMAX);
+
+		auto vec = result->to_vector();
+		double sum = 0;
+		for (double v : vec) sum += v;
+		TS_ASSERT_DELTA(sum, 1.0, 1e-10);
+	}
+
+	void test_nonlinearity_null_tensor()
+	{
+		ATenValuePtr null_tensor = nullptr;
+		ATenValuePtr result = apply_nonlinearity(null_tensor, Nonlinearity::SIGMOID);
+		TS_ASSERT(result == nullptr);
+	}
+
+	// ========================================
+	// Additional TensorEquation Tests
+	// ========================================
+
+	void test_tensor_equation_with_bias()
+	{
+		TensorEquation eq("biased_rule", "out", {"in"},
+		                  "i->i", Nonlinearity::NONE);
+
+		ATenValuePtr bias = createATenFromVector({1.0, 1.0, 1.0}, {3});
+		eq.set_bias(bias);
+
+		TS_ASSERT(eq.bias() != nullptr);
+	}
+
+	void test_tensor_equation_single_input()
+	{
+		TensorEquation eq("identity", "out", {"in"},
+		                  "i->i", Nonlinearity::NONE);
+
+		ATenValuePtr a = createATenFromVector({1.0, 2.0, 3.0}, {3});
+		std::map<std::string, ATenValuePtr> inputs;
+		inputs["in"] = a;
+
+		ATenValuePtr result = eq.execute(inputs);
+		auto vec = result->to_vector();
+		TS_ASSERT_DELTA(vec[0], 1.0, 1e-10);
+		TS_ASSERT_DELTA(vec[1], 2.0, 1e-10);
+		TS_ASSERT_DELTA(vec[2], 3.0, 1e-10);
+	}
+
+	void test_tensor_equation_with_sigmoid()
+	{
+		TensorEquation eq("sigmoid_rule", "out", {"in"},
+		                  "i->i", Nonlinearity::SIGMOID);
+
+		ATenValuePtr a = createATenFromVector({0.0}, {1});
+		std::map<std::string, ATenValuePtr> inputs;
+		inputs["in"] = a;
+
+		ATenValuePtr result = eq.execute(inputs);
+		TS_ASSERT_DELTA(result->item(), 0.5, 1e-10);
+	}
+
+	void test_tensor_equation_einsum_accessor()
+	{
+		TensorEquation eq("test", "out", {"in1", "in2"},
+		                  "ij,jk->ik");
+
+		const EinsumSpec& spec = eq.einsum();
+		TS_ASSERT_EQUALS(spec.notation(), "ij,jk->ik");
+	}
+
+	// ========================================
+	// Additional TensorProgram Tests
+	// ========================================
+
+	void test_tensor_program_remove_fact()
+	{
+		TensorProgram prog("test");
+
+		ATenValuePtr t = createATenFromVector({1.0}, {1});
+		prog.add_fact("f1", t);
+		TS_ASSERT(prog.has_fact("f1"));
+
+		prog.remove_fact("f1");
+		TS_ASSERT(!prog.has_fact("f1"));
+	}
+
+	void test_tensor_program_remove_equation()
+	{
+		TensorProgram prog("test");
+
+		prog.add_equation("eq1", "out", {"in"}, "i->i");
+		TS_ASSERT_EQUALS(prog.num_equations(), 1);
+
+		prog.remove_equation("eq1");
+		TS_ASSERT_EQUALS(prog.num_equations(), 0);
+	}
+
+	void test_tensor_program_fact_names()
+	{
+		TensorProgram prog("test");
+
+		ATenValuePtr t = createATenFromVector({1.0}, {1});
+		prog.add_fact("a", t);
+		prog.add_fact("b", t);
+		prog.add_fact("c", t);
+
+		auto names = prog.fact_names();
+		TS_ASSERT_EQUALS(names.size(), 3);
+	}
+
+	void test_tensor_program_get_nonexistent()
+	{
+		TensorProgram prog("test");
+
+		ATenValuePtr result = prog.get_fact("nonexistent");
+		TS_ASSERT(result == nullptr);
+
+		TensorEquationPtr eq = prog.get_equation("nonexistent");
+		TS_ASSERT(eq == nullptr);
+	}
+
+	void test_tensor_program_clear_derived()
+	{
+		TensorProgram prog("test");
+
+		ATenValuePtr t = createATenFromVector({1.0, 1.0, 0.0, 0.0}, {2, 2});
+		prog.add_fact("in", t);
+		prog.add_equation("eq1", "out", {"in", "in"}, "ij,jk->ik");
+
+		prog.forward();
+		TS_ASSERT(prog.get_derived("out") != nullptr);
+
+		prog.clear_derived();
+		TS_ASSERT(prog.get_derived("out") == nullptr);
+	}
+
+	void test_tensor_program_forward_count()
+	{
+		TensorProgram prog("test");
+
+		ATenValuePtr t = createATenFromVector({1.0}, {1});
+		prog.add_fact("in", t);
+		prog.add_equation("eq1", "out", {"in"}, "i->i");
+
+		TS_ASSERT_EQUALS(prog.forward_count(), 0);
+
+		prog.forward();
+		TS_ASSERT_EQUALS(prog.forward_count(), 1);
+
+		prog.forward();
+		TS_ASSERT_EQUALS(prog.forward_count(), 2);
+	}
+
+	// ========================================
+	// Relation <-> Tensor Tests
+	// ========================================
+
+	void test_relation_to_tensor()
+	{
+		// Create some atoms in atomspace
+		Handle alice = _as->add_node(CONCEPT_NODE, "Alice");
+		Handle bob = _as->add_node(CONCEPT_NODE, "Bob");
+		Handle charlie = _as->add_node(CONCEPT_NODE, "Charlie");
+
+		// Create parent relationships
+		_as->add_link(INHERITANCE_LINK, alice, bob);
+		_as->add_link(INHERITANCE_LINK, bob, charlie);
+
+		// Create entity index
+		std::map<Handle, int64_t> entity_index;
+		entity_index[alice] = 0;
+		entity_index[bob] = 1;
+		entity_index[charlie] = 2;
+
+		ATenValuePtr tensor = relation_to_tensor(_as.get(), INHERITANCE_LINK, entity_index);
+
+		TS_ASSERT(tensor != nullptr);
+		TS_ASSERT_EQUALS(tensor->shape()[0], 3);
+		TS_ASSERT_EQUALS(tensor->shape()[1], 3);
+
+		auto vec = tensor->to_vector();
+		TS_ASSERT_DELTA(vec[1], 1.0, 1e-10);  // [0,1]: alice -> bob
+		TS_ASSERT_DELTA(vec[5], 1.0, 1e-10);  // [1,2]: bob -> charlie
+	}
+
+	void test_tensor_to_atoms()
+	{
+		// Create entities
+		Handle e0 = _as->add_node(CONCEPT_NODE, "E0");
+		Handle e1 = _as->add_node(CONCEPT_NODE, "E1");
+		Handle e2 = _as->add_node(CONCEPT_NODE, "E2");
+
+		std::vector<Handle> entities = {e0, e1, e2};
+
+		// Create tensor with some relations
+		ATenValuePtr tensor = createATenFromVector({
+			0.0, 0.8, 0.0,
+			0.0, 0.0, 0.9,
+			0.0, 0.0, 0.0
+		}, {3, 3});
+
+		HandleSeq atoms = tensor_to_atoms(tensor, INHERITANCE_LINK, entities, _as.get(), 0.5);
+
+		// Should have 2 atoms (0.8 > 0.5, 0.9 > 0.5)
+		TS_ASSERT_EQUALS(atoms.size(), 2);
+	}
+
+	// ========================================
+	// Additional Datalog Parsing Tests
+	// ========================================
+
+	void test_parse_datalog_three_body()
+	{
+		TensorEquationPtr eq = parse_datalog_rule(
+			"result(X,W) :- a(X,Y), b(Y,Z), c(Z,W).");
+
+		TS_ASSERT(eq != nullptr);
+		TS_ASSERT_EQUALS(eq->lhs_name(), "result");
+		TS_ASSERT_EQUALS(eq->rhs_names().size(), 3);
+	}
+
+	void test_parse_datalog_self_join()
+	{
+		TensorEquationPtr eq = parse_datalog_rule(
+			"sibling(X,Y) :- parent(Z,X), parent(Z,Y).");
+
+		TS_ASSERT(eq != nullptr);
+		TS_ASSERT_EQUALS(eq->lhs_name(), "sibling");
+		TS_ASSERT_EQUALS(eq->rhs_names().size(), 2);
+	}
+
+	// ========================================
+	// TensorLogicLinks Tests
+	// ========================================
+
+	void test_einsum_link_create()
+	{
+		Handle notation = _as->add_node(CONCEPT_NODE, "ij,jk->ik");
+		Handle tensor1 = _as->add_node(PREDICATE_NODE, "matrix1");
+		Handle tensor2 = _as->add_node(PREDICATE_NODE, "matrix2");
+
+		Handle einsum = _as->add_link(EINSUM_LINK, notation, tensor1, tensor2);
+
+		TS_ASSERT(einsum != nullptr);
+		TS_ASSERT_EQUALS(einsum->get_type(), EINSUM_LINK);
+		TS_ASSERT_EQUALS(einsum->get_arity(), 3);
+	}
+
+	void test_tensor_equation_link_create()
+	{
+		Handle lhs = _as->add_node(PREDICATE_NODE, "grandparent");
+		Handle rhs1 = _as->add_node(PREDICATE_NODE, "parent");
+		Handle rhs2 = _as->add_node(PREDICATE_NODE, "parent");
+		Handle notation = _as->add_node(CONCEPT_NODE, "ij,jk->ik");
+		Handle nl = _as->add_node(CONCEPT_NODE, "threshold");
+
+		Handle eq = _as->add_link(TENSOR_EQUATION_LINK, lhs, rhs1, rhs2, notation, nl);
+
+		TS_ASSERT(eq != nullptr);
+		TS_ASSERT_EQUALS(eq->get_type(), TENSOR_EQUATION_LINK);
+	}
+
+	void test_tensor_program_link_create()
+	{
+		Handle name = _as->add_node(CONCEPT_NODE, "family_program");
+
+		Handle lhs = _as->add_node(PREDICATE_NODE, "grandparent");
+		Handle rhs = _as->add_node(PREDICATE_NODE, "parent");
+		Handle notation = _as->add_node(CONCEPT_NODE, "ij,jk->ik");
+		Handle eq = _as->add_link(TENSOR_EQUATION_LINK, lhs, rhs, rhs, notation);
+
+		Handle equations = _as->add_link(LIST_LINK, eq);
+		Handle prog = _as->add_link(TENSOR_PROGRAM_LINK, name, equations);
+
+		TS_ASSERT(prog != nullptr);
+		TS_ASSERT_EQUALS(prog->get_type(), TENSOR_PROGRAM_LINK);
+	}
+
+	void test_boolean_mode_link_create()
+	{
+		Handle inner = _as->add_node(CONCEPT_NODE, "inner_op");
+		Handle bool_mode = _as->add_link(BOOLEAN_MODE_LINK, inner);
+
+		TS_ASSERT(bool_mode != nullptr);
+		TS_ASSERT_EQUALS(bool_mode->get_type(), BOOLEAN_MODE_LINK);
+	}
+
+	void test_continuous_mode_link_create()
+	{
+		Handle inner = _as->add_node(CONCEPT_NODE, "inner_op");
+		Handle nl = _as->add_node(CONCEPT_NODE, "sigmoid");
+		Handle cont_mode = _as->add_link(CONTINUOUS_MODE_LINK, inner, nl);
+
+		TS_ASSERT(cont_mode != nullptr);
+		TS_ASSERT_EQUALS(cont_mode->get_type(), CONTINUOUS_MODE_LINK);
+	}
+
+	// ========================================
+	// Edge Case and Error Handling Tests
+	// ========================================
+
+	void test_empty_tensor_program()
+	{
+		TensorProgram prog("empty");
+
+		TS_ASSERT_EQUALS(prog.num_facts(), 0);
+		TS_ASSERT_EQUALS(prog.num_equations(), 0);
+
+		// Forward on empty program should not crash
+		prog.forward();
+		prog.forward_to_fixpoint();
+	}
+
+	void test_equation_missing_inputs()
+	{
+		TensorProgram prog("test");
+
+		// Add equation but no facts
+		prog.add_equation("eq1", "out", {"in1", "in2"}, "ij,jk->ik");
+
+		// Forward should handle missing inputs gracefully
+		prog.forward();
+
+		// Output should not exist
+		TS_ASSERT(prog.get_derived("out") == nullptr);
+	}
+
+	void test_large_tensor()
+	{
+		// Test with larger tensor to ensure scaling works
+		std::vector<double> data(100 * 100, 1.0);
+		ATenValuePtr large = createATenFromVector(data, {100, 100});
+
+		TS_ASSERT_EQUALS(large->numel(), 10000);
+		TS_ASSERT_EQUALS(large->shape()[0], 100);
+		TS_ASSERT_EQUALS(large->shape()[1], 100);
+
+		// Sum should work
+		ATenValuePtr sum = ATenValueCast(large->sum());
+		TS_ASSERT_DELTA(sum->item(), 10000.0, 1e-10);
+	}
+
+	void test_chained_reasoning()
+	{
+		// Test multiple dependent equations
+		TensorProgram prog("chain");
+
+		ATenValuePtr data = createATenFromVector({
+			0.0, 1.0, 0.0,
+			0.0, 0.0, 1.0,
+			0.0, 0.0, 0.0
+		}, {3, 3});
+
+		prog.add_fact("edge", data);
+		prog.add_equation("hop1", "hop1", {"edge", "edge"}, "ij,jk->ik", Nonlinearity::THRESHOLD);
+		prog.add_equation("hop2", "hop2", {"edge", "hop1"}, "ij,jk->ik", Nonlinearity::THRESHOLD);
+
+		prog.forward();
+		prog.forward();  // Need two iterations for hop2
+
+		ATenValuePtr h2 = prog.get_derived("hop2");
+		TS_ASSERT(h2 != nullptr);
+	}
+
+	void test_convergence_detection()
+	{
+		TensorProgram prog("converge");
+
+		// Create a simple idempotent operation
+		ATenValuePtr ones = createATenFromVector({1.0, 1.0, 1.0, 1.0}, {2, 2});
+		prog.add_fact("data", ones);
+		prog.add_equation("same", "out", {"data"}, "ij->ij");
+
+		// Should converge (forward_to_fixpoint runs)
+		prog.forward_to_fixpoint();
+
+		// Check that forward was called
+		TS_ASSERT(prog.forward_count() > 0);
+	}
+
+	// ========================================
+	// Complex Integration Tests
+	// ========================================
+
+	void test_uncle_reasoning()
+	{
+		// uncle(X,Z) :- sibling(X,Y), parent(Y,Z)
+		// sibling(X,Y) :- parent(Z,X), parent(Z,Y)
+
+		TensorProgram prog("uncle", ReasoningMode::BOOLEAN);
+
+		// 4 entities: grandpa=0, dad=1, uncle=2, child=3
+		// grandpa is parent of dad and uncle
+		// dad is parent of child
+		ATenValuePtr parent = createATenFromVector({
+			0.0, 1.0, 1.0, 0.0,  // grandpa -> dad, uncle
+			0.0, 0.0, 0.0, 1.0,  // dad -> child
+			0.0, 0.0, 0.0, 0.0,  // uncle -> nobody
+			0.0, 0.0, 0.0, 0.0   // child -> nobody
+		}, {4, 4});
+
+		prog.add_fact("parent", parent);
+
+		// First compute siblings: sibling[x,y] = sum_z parent[z,x] * parent[z,y]
+		// This needs transposing parent to get parent_T[x,z]
+		prog.add_equation("sibling", "sibling", {"parent", "parent"},
+		                  "ji,jk->ik", Nonlinearity::THRESHOLD);
+
+		// Then compute uncle: uncle[x,z] = sibling[x,y] * parent[y,z]
+		prog.add_equation("uncle_rule", "uncle", {"sibling", "parent"},
+		                  "ij,jk->ik", Nonlinearity::THRESHOLD);
+
+		prog.forward();
+		prog.forward();  // Two passes needed
+
+		ATenValuePtr uncle = prog.get_derived("uncle");
+		TS_ASSERT(uncle != nullptr);
+
+		// uncle[2,3] should be 1 (uncle is uncle of child)
+		auto vec = uncle->to_vector();
+		TS_ASSERT_DELTA(vec[11], 1.0, 1e-10);  // [2,3]
+	}
+
+	void test_probabilistic_reasoning()
+	{
+		// Test continuous probabilistic reasoning
+		TensorProgram prog("prob", ReasoningMode::CONTINUOUS);
+
+		// Probabilistic parent relation
+		ATenValuePtr parent = createATenFromVector({
+			0.0, 0.9, 0.0,
+			0.0, 0.0, 0.8,
+			0.0, 0.0, 0.0
+		}, {3, 3});
+
+		prog.add_fact("parent", parent);
+		prog.add_equation("gp", "grandparent", {"parent", "parent"},
+		                  "ij,jk->ik", Nonlinearity::NONE);
+
+		prog.forward();
+
+		ATenValuePtr gp = prog.get_derived("grandparent");
+		auto vec = gp->to_vector();
+
+		// grandparent[0,2] = 0.9 * 0.8 = 0.72
+		TS_ASSERT_DELTA(vec[2], 0.72, 1e-10);
+	}
+};

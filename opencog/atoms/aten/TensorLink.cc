@@ -500,20 +500,5 @@ Handle SetTensorLink::factory(const Handle& h)
 
 // ============================================================
 // Factory registration
-
-DEFINE_LINK_FACTORY(TensorOpLink, TENSOR_OP_LINK)
-DEFINE_LINK_FACTORY(TensorAddLink, TENSOR_ADD_LINK)
-DEFINE_LINK_FACTORY(TensorSubLink, TENSOR_SUB_LINK)
-DEFINE_LINK_FACTORY(TensorMulLink, TENSOR_MUL_LINK)
-DEFINE_LINK_FACTORY(TensorDivLink, TENSOR_DIV_LINK)
-DEFINE_LINK_FACTORY(TensorMatmulLink, TENSOR_MATMUL_LINK)
-DEFINE_LINK_FACTORY(TensorTransposeLink, TENSOR_TRANSPOSE_LINK)
-DEFINE_LINK_FACTORY(TensorReshapeLink, TENSOR_RESHAPE_LINK)
-DEFINE_LINK_FACTORY(TensorReluLink, TENSOR_RELU_LINK)
-DEFINE_LINK_FACTORY(TensorSigmoidLink, TENSOR_SIGMOID_LINK)
-DEFINE_LINK_FACTORY(TensorTanhLink, TENSOR_TANH_LINK)
-DEFINE_LINK_FACTORY(TensorSoftmaxLink, TENSOR_SOFTMAX_LINK)
-DEFINE_LINK_FACTORY(TensorSumLink, TENSOR_SUM_LINK)
-DEFINE_LINK_FACTORY(TensorMeanLink, TENSOR_MEAN_LINK)
-DEFINE_LINK_FACTORY(TensorOfLink, TENSOR_OF_LINK)
-DEFINE_LINK_FACTORY(SetTensorLink, SET_TENSOR_LINK)
+// Note: Factory methods are defined inline with each class above.
+// The DEFINE_LINK_FACTORY macros are not needed here.

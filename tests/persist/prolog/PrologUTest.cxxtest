@@ -1,0 +1,403 @@
+/*
+ * tests/persist/prolog/PrologUTest.cxxtest
+ *
+ * Copyright (C) 2025 OpenCog Foundation
+ * All Rights Reserved
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License v3 as
+ * published by the Free Software Foundation and including the exceptions
+ * at http://opencog.org/wiki/Licenses
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program; if not, write to:
+ * Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
+
+#include <opencog/atoms/base/Atom.h>
+#include <opencog/atoms/base/Link.h>
+#include <opencog/atoms/base/Node.h>
+#include <opencog/persist/prolog/Prolog.h>
+#include <opencog/atomspace/AtomSpace.h>
+#include <opencog/util/exceptions.h>
+
+using namespace opencog;
+
+class PrologUTest : public CxxTest::TestSuite
+{
+private:
+	AtomSpacePtr as;
+
+public:
+	PrologUTest()
+	{
+		as = createAtomSpace();
+	}
+
+	void setUp() { as->clear(); }
+	void tearDown() {}
+
+	// ===================== Parse Tests =====================
+
+	void test_parse_simple_fact()
+	{
+		std::string prolog = "likes(john, mary).";
+		size_t l = 0;
+		size_t r = std::string::npos;
+
+		HandleSeq clauses = Prolog::parse(prolog, l, r);
+
+		TS_ASSERT_EQUALS(clauses.size(), 1);
+		Handle clause = clauses[0];
+
+		// Should be an EvaluationLink
+		TS_ASSERT_EQUALS(clause->get_type(), EVALUATION_LINK);
+		TS_ASSERT_EQUALS(clause->get_arity(), 2);
+
+		// First element should be the predicate "likes"
+		Handle pred = clause->getOutgoingAtom(0);
+		TS_ASSERT_EQUALS(pred->get_type(), PREDICATE_NODE);
+		TS_ASSERT_EQUALS(pred->get_name(), "likes");
+
+		// Second element should be a ListLink with john and mary
+		Handle args = clause->getOutgoingAtom(1);
+		TS_ASSERT_EQUALS(args->get_type(), LIST_LINK);
+		TS_ASSERT_EQUALS(args->get_arity(), 2);
+	}
+
+	void test_parse_unary_fact()
+	{
+		std::string prolog = "food(pizza).";
+		size_t l = 0;
+		size_t r = std::string::npos;
+
+		HandleSeq clauses = Prolog::parse(prolog, l, r);
+
+		TS_ASSERT_EQUALS(clauses.size(), 1);
+		Handle clause = clauses[0];
+
+		TS_ASSERT_EQUALS(clause->get_type(), EVALUATION_LINK);
+
+		Handle pred = clause->getOutgoingAtom(0);
+		TS_ASSERT_EQUALS(pred->get_name(), "food");
+
+		Handle args = clause->getOutgoingAtom(1);
+		TS_ASSERT_EQUALS(args->get_arity(), 1);
+	}
+
+	void test_parse_multiple_facts()
+	{
+		std::string prolog = "likes(john, mary). food(pizza). happy(john).";
+		size_t l = 0;
+		size_t r = std::string::npos;
+
+		HandleSeq clauses = Prolog::parse(prolog, l, r);
+
+		TS_ASSERT_EQUALS(clauses.size(), 3);
+	}
+
+	void test_parse_horn_clause()
+	{
+		std::string prolog = "child(X,Y) :- parent(Y,X).";
+		size_t l = 0;
+		size_t r = std::string::npos;
+
+		HandleSeq clauses = Prolog::parse(prolog, l, r);
+
+		TS_ASSERT_EQUALS(clauses.size(), 1);
+		Handle clause = clauses[0];
+
+		// Should be an ImplicationLink
+		TS_ASSERT_EQUALS(clause->get_type(), IMPLICATION_LINK);
+		TS_ASSERT_EQUALS(clause->get_arity(), 2);
+	}
+
+	void test_parse_horn_clause_with_conjunction()
+	{
+		std::string prolog = "grandparent(X,Z) :- parent(X,Y), parent(Y,Z).";
+		size_t l = 0;
+		size_t r = std::string::npos;
+
+		HandleSeq clauses = Prolog::parse(prolog, l, r);
+
+		TS_ASSERT_EQUALS(clauses.size(), 1);
+		Handle clause = clauses[0];
+
+		TS_ASSERT_EQUALS(clause->get_type(), IMPLICATION_LINK);
+
+		// First outgoing should be an AndLink (conjunction of premises)
+		Handle premise = clause->getOutgoingAtom(0);
+		TS_ASSERT_EQUALS(premise->get_type(), AND_LINK);
+		TS_ASSERT_EQUALS(premise->get_arity(), 2);
+	}
+
+	void test_parse_variable_uppercase()
+	{
+		std::string prolog = "likes(X, Y).";
+		size_t l = 0;
+		size_t r = std::string::npos;
+
+		HandleSeq clauses = Prolog::parse(prolog, l, r);
+		Handle clause = clauses[0];
+		Handle args = clause->getOutgoingAtom(1);
+
+		// Uppercase should create VariableNodes
+		Handle x = args->getOutgoingAtom(0);
+		Handle y = args->getOutgoingAtom(1);
+
+		TS_ASSERT_EQUALS(x->get_type(), VARIABLE_NODE);
+		TS_ASSERT_EQUALS(y->get_type(), VARIABLE_NODE);
+	}
+
+	void test_parse_constant_lowercase()
+	{
+		std::string prolog = "likes(john, mary).";
+		size_t l = 0;
+		size_t r = std::string::npos;
+
+		HandleSeq clauses = Prolog::parse(prolog, l, r);
+		Handle clause = clauses[0];
+		Handle args = clause->getOutgoingAtom(1);
+
+		// Lowercase should create ConceptNodes
+		Handle john = args->getOutgoingAtom(0);
+		Handle mary = args->getOutgoingAtom(1);
+
+		TS_ASSERT_EQUALS(john->get_type(), CONCEPT_NODE);
+		TS_ASSERT_EQUALS(mary->get_type(), CONCEPT_NODE);
+	}
+
+	void test_parse_underscore_variable()
+	{
+		std::string prolog = "likes(_x, john).";
+		size_t l = 0;
+		size_t r = std::string::npos;
+
+		HandleSeq clauses = Prolog::parse(prolog, l, r);
+		Handle clause = clauses[0];
+		Handle args = clause->getOutgoingAtom(1);
+
+		// Underscore prefix should create VariableNode
+		Handle x = args->getOutgoingAtom(0);
+		TS_ASSERT_EQUALS(x->get_type(), VARIABLE_NODE);
+	}
+
+	// ===================== get_next_expr Tests =====================
+
+	void test_get_next_expr_simple()
+	{
+		std::string prolog = "foo(bar).";
+		size_t l = 0;
+		size_t r = std::string::npos;
+
+		Handle expr = Prolog::get_next_expr(prolog, l, r);
+
+		TS_ASSERT(expr != nullptr);
+		TS_ASSERT_EQUALS(expr->get_type(), EVALUATION_LINK);
+	}
+
+	void test_get_next_expr_bad_syntax_no_period()
+	{
+		std::string prolog = "foo(bar)";
+		size_t l = 0;
+		size_t r = std::string::npos;
+
+		TS_ASSERT_THROWS(Prolog::get_next_expr(prolog, l, r), SyntaxException&);
+	}
+
+	void test_get_next_expr_bad_syntax_no_paren()
+	{
+		std::string prolog = "foo bar.";
+		size_t l = 0;
+		size_t r = std::string::npos;
+
+		TS_ASSERT_THROWS(Prolog::get_next_expr(prolog, l, r), SyntaxException&);
+	}
+
+	void test_get_next_expr_query_throws()
+	{
+		std::string prolog = "?- likes(alice, john).";
+		size_t l = 0;
+		size_t r = std::string::npos;
+
+		// Queries are not yet supported
+		TS_ASSERT_THROWS(Prolog::get_next_expr(prolog, l, r), SyntaxException&);
+	}
+
+	// ===================== prt_datalog Tests =====================
+
+	void test_prt_datalog_simple_fact()
+	{
+		// Create an EvaluationLink representing likes(john, mary)
+		Handle pred = createNode(PREDICATE_NODE, "likes");
+		Handle john = createNode(CONCEPT_NODE, "john");
+		Handle mary = createNode(CONCEPT_NODE, "mary");
+		Handle args = createLink({john, mary}, LIST_LINK);
+		Handle eval = createLink({pred, args}, EVALUATION_LINK);
+
+		std::string result = Prolog::prt_datalog(eval, false);
+
+		TS_ASSERT(result.find("likes") != std::string::npos);
+		TS_ASSERT(result.find("john") != std::string::npos);
+		TS_ASSERT(result.find("mary") != std::string::npos);
+		TS_ASSERT(result.find(".") != std::string::npos);
+	}
+
+	void test_prt_datalog_simple_fact_recursive()
+	{
+		Handle pred = createNode(PREDICATE_NODE, "foo");
+		Handle bar = createNode(CONCEPT_NODE, "bar");
+		Handle args = createLink({bar}, LIST_LINK);
+		Handle eval = createLink({pred, args}, EVALUATION_LINK);
+
+		// Recursive mode (true) should not add period
+		std::string result = Prolog::prt_datalog(eval, true);
+		TS_ASSERT(result.find(".") == std::string::npos);
+
+		// Non-recursive mode should add period
+		std::string result2 = Prolog::prt_datalog(eval, false);
+		TS_ASSERT(result2.find(".") != std::string::npos);
+	}
+
+	void test_prt_datalog_implication()
+	{
+		// Create child(X,Y) :- parent(Y,X)
+		Handle child_pred = createNode(PREDICATE_NODE, "child");
+		Handle x = createNode(VARIABLE_NODE, "X");
+		Handle y = createNode(VARIABLE_NODE, "Y");
+		Handle child_args = createLink({x, y}, LIST_LINK);
+		Handle child_eval = createLink({child_pred, child_args}, EVALUATION_LINK);
+
+		Handle parent_pred = createNode(PREDICATE_NODE, "parent");
+		Handle parent_args = createLink({y, x}, LIST_LINK);
+		Handle parent_eval = createLink({parent_pred, parent_args}, EVALUATION_LINK);
+
+		Handle impl = createLink({parent_eval, child_eval}, IMPLICATION_LINK);
+
+		std::string result = Prolog::prt_datalog(impl, false);
+
+		TS_ASSERT(result.find("child") != std::string::npos);
+		TS_ASSERT(result.find("parent") != std::string::npos);
+		TS_ASSERT(result.find(":-") != std::string::npos);
+	}
+
+	void test_prt_datalog_implication_bad_arity()
+	{
+		// Implication with wrong arity should throw
+		Handle a = createNode(CONCEPT_NODE, "a");
+		Handle impl = createLink({a}, IMPLICATION_LINK);
+
+		TS_ASSERT_THROWS(Prolog::prt_datalog(impl, false), SyntaxException&);
+	}
+
+	void test_prt_datalog_conjunction()
+	{
+		// Create grandparent(X,Z) :- parent(X,Y), parent(Y,Z)
+		Handle gp_pred = createNode(PREDICATE_NODE, "grandparent");
+		Handle x = createNode(VARIABLE_NODE, "X");
+		Handle y = createNode(VARIABLE_NODE, "Y");
+		Handle z = createNode(VARIABLE_NODE, "Z");
+		Handle gp_args = createLink({x, z}, LIST_LINK);
+		Handle gp_eval = createLink({gp_pred, gp_args}, EVALUATION_LINK);
+
+		Handle parent_pred = createNode(PREDICATE_NODE, "parent");
+		Handle p1_args = createLink({x, y}, LIST_LINK);
+		Handle p1_eval = createLink({parent_pred, p1_args}, EVALUATION_LINK);
+
+		Handle p2_args = createLink({y, z}, LIST_LINK);
+		Handle p2_eval = createLink({parent_pred, p2_args}, EVALUATION_LINK);
+
+		Handle and_link = createLink({p1_eval, p2_eval}, AND_LINK);
+		Handle impl = createLink({and_link, gp_eval}, IMPLICATION_LINK);
+
+		std::string result = Prolog::prt_datalog(impl, false);
+
+		TS_ASSERT(result.find("grandparent") != std::string::npos);
+		TS_ASSERT(result.find(":-") != std::string::npos);
+	}
+
+	void test_prt_datalog_node()
+	{
+		// A node should just return its name
+		Handle a = createNode(CONCEPT_NODE, "foo");
+		std::string result = Prolog::prt_datalog(a, false);
+		TS_ASSERT_EQUALS(result, "foo");
+	}
+
+	// ===================== Round-trip Tests =====================
+
+	void test_roundtrip_simple_fact()
+	{
+		// Parse a fact, then print it back
+		std::string original = "likes(john, mary).";
+		size_t l = 0;
+		size_t r = std::string::npos;
+
+		HandleSeq clauses = Prolog::parse(original, l, r);
+		std::string result = Prolog::prt_datalog(clauses[0], false);
+
+		// Should contain the essential elements
+		TS_ASSERT(result.find("likes") != std::string::npos);
+		TS_ASSERT(result.find("john") != std::string::npos);
+		TS_ASSERT(result.find("mary") != std::string::npos);
+	}
+
+	// ===================== Edge Cases =====================
+
+	void test_parse_whitespace_handling()
+	{
+		std::string prolog = "  \n\tlikes(john,   mary).  \n  ";
+		size_t l = 0;
+		size_t r = std::string::npos;
+
+		HandleSeq clauses = Prolog::parse(prolog, l, r);
+
+		TS_ASSERT_EQUALS(clauses.size(), 1);
+	}
+
+	void test_parse_empty_throws()
+	{
+		std::string prolog = "   ";
+		size_t l = 0;
+		size_t r = std::string::npos;
+
+		l = prolog.find_first_not_of(" \t\n", l);
+		// Empty input should throw
+		TS_ASSERT(l == std::string::npos);
+	}
+
+	void test_parse_ternary_predicate()
+	{
+		std::string prolog = "between(a, b, c).";
+		size_t l = 0;
+		size_t r = std::string::npos;
+
+		HandleSeq clauses = Prolog::parse(prolog, l, r);
+		Handle clause = clauses[0];
+		Handle args = clause->getOutgoingAtom(1);
+
+		TS_ASSERT_EQUALS(args->get_arity(), 3);
+	}
+
+	void test_parse_quoted_string()
+	{
+		std::string prolog = "name('John Smith', person).";
+		size_t l = 0;
+		size_t r = std::string::npos;
+
+		HandleSeq clauses = Prolog::parse(prolog, l, r);
+		Handle clause = clauses[0];
+		Handle args = clause->getOutgoingAtom(1);
+
+		// First argument should be the quoted string
+		Handle name = args->getOutgoingAtom(0);
+		TS_ASSERT_EQUALS(name->get_type(), CONCEPT_NODE);
+		TS_ASSERT(name->get_name().find("John") != std::string::npos);
+	}
+};

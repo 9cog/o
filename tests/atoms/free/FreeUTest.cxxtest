@@ -1,0 +1,664 @@
+/*
+ * tests/atoms/free/FreeUTest.cxxtest
+ *
+ * Copyright (C) 2025 OpenCog Foundation
+ * All Rights Reserved
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License v3 as
+ * published by the Free Software Foundation and including the exceptions
+ * at http://opencog.org/wiki/Licenses
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program; if not, write to:
+ * Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
+
+#include <opencog/atoms/base/Atom.h>
+#include <opencog/atoms/base/Link.h>
+#include <opencog/atoms/base/Node.h>
+#include <opencog/atoms/free/Context.h>
+#include <opencog/atoms/free/FindUtils.h>
+#include <opencog/atoms/free/FreeLink.h>
+#include <opencog/atoms/free/FreeVariables.h>
+#include <opencog/atoms/free/QuoteLink.h>
+#include <opencog/atoms/free/Quotation.h>
+#include <opencog/atoms/free/Replacement.h>
+#include <opencog/atomspace/AtomSpace.h>
+#include <opencog/util/exceptions.h>
+
+using namespace opencog;
+
+class FreeUTest : public CxxTest::TestSuite
+{
+private:
+	AtomSpacePtr as;
+
+public:
+	FreeUTest()
+	{
+		as = createAtomSpace();
+	}
+
+	void setUp() { as->clear(); }
+	void tearDown() {}
+
+	// ===================== Quotation Tests =====================
+
+	void test_Quotation_default()
+	{
+		Quotation q;
+		TS_ASSERT_EQUALS(q.level(), 0);
+		TS_ASSERT(!q.is_locally_quoted());
+		TS_ASSERT(!q.is_quoted());
+		TS_ASSERT(q.is_unquoted());
+	}
+
+	void test_Quotation_with_level()
+	{
+		Quotation q(2, false);
+		TS_ASSERT_EQUALS(q.level(), 2);
+		TS_ASSERT(!q.is_locally_quoted());
+		TS_ASSERT(q.is_quoted());
+		TS_ASSERT(!q.is_unquoted());
+	}
+
+	void test_Quotation_locally_quoted()
+	{
+		Quotation q(0, true);
+		TS_ASSERT_EQUALS(q.level(), 0);
+		TS_ASSERT(q.is_locally_quoted());
+		TS_ASSERT(q.is_quoted());
+		TS_ASSERT(!q.is_unquoted());
+	}
+
+	void test_Quotation_update_quote()
+	{
+		Quotation q;
+		TS_ASSERT_EQUALS(q.level(), 0);
+
+		// Updating with QUOTE_LINK should increment level
+		q.update(QUOTE_LINK);
+		TS_ASSERT_EQUALS(q.level(), 1);
+		TS_ASSERT(q.is_quoted());
+	}
+
+	void test_Quotation_update_unquote()
+	{
+		Quotation q(1, false);
+		TS_ASSERT_EQUALS(q.level(), 1);
+
+		// Updating with UNQUOTE_LINK should decrement level
+		q.update(UNQUOTE_LINK);
+		TS_ASSERT_EQUALS(q.level(), 0);
+		TS_ASSERT(q.is_unquoted());
+	}
+
+	void test_Quotation_update_local_quote()
+	{
+		Quotation q;
+		TS_ASSERT(!q.is_locally_quoted());
+
+		// Updating with LOCAL_QUOTE_LINK should set local quote
+		q.update(LOCAL_QUOTE_LINK);
+		TS_ASSERT(q.is_locally_quoted());
+		TS_ASSERT(q.is_quoted());
+	}
+
+	void test_Quotation_consumable()
+	{
+		Quotation q;
+
+		// Unquoted quotation can consume QUOTE_LINK or LOCAL_QUOTE_LINK
+		TS_ASSERT(q.consumable(QUOTE_LINK));
+		TS_ASSERT(q.consumable(LOCAL_QUOTE_LINK));
+		TS_ASSERT(!q.consumable(UNQUOTE_LINK));
+
+		// Level 1 quotation can consume UNQUOTE_LINK
+		Quotation q1(1, false);
+		TS_ASSERT(q1.consumable(UNQUOTE_LINK));
+		TS_ASSERT(!q1.consumable(QUOTE_LINK));
+	}
+
+	void test_Quotation_is_quotation_type()
+	{
+		TS_ASSERT(Quotation::is_quotation_type(QUOTE_LINK));
+		TS_ASSERT(Quotation::is_quotation_type(UNQUOTE_LINK));
+		TS_ASSERT(Quotation::is_quotation_type(LOCAL_QUOTE_LINK));
+		TS_ASSERT(!Quotation::is_quotation_type(LIST_LINK));
+		TS_ASSERT(!Quotation::is_quotation_type(CONCEPT_NODE));
+	}
+
+	void test_Quotation_comparison()
+	{
+		Quotation q1(1, false);
+		Quotation q2(2, false);
+		Quotation q3(1, true);
+
+		TS_ASSERT(q1 < q2);
+		TS_ASSERT(!(q2 < q1));
+		TS_ASSERT(q1 < q3); // Same level, but local quote makes q3 greater
+	}
+
+	void test_Quotation_equality()
+	{
+		Quotation q1(1, false);
+		Quotation q2(1, false);
+		Quotation q3(1, true);
+
+		TS_ASSERT(q1 == q2);
+		TS_ASSERT(!(q1 == q3));
+	}
+
+	void test_Quotation_to_string()
+	{
+		Quotation q(2, true);
+		std::string s = q.to_string();
+		TS_ASSERT(s.find("level = 2") != std::string::npos);
+		TS_ASSERT(s.find("local = 1") != std::string::npos);
+	}
+
+	// ===================== Context Tests =====================
+
+	void test_Context_default()
+	{
+		Context ctx;
+		TS_ASSERT(ctx.is_unquoted());
+		TS_ASSERT(!ctx.is_quoted());
+	}
+
+	void test_Context_with_quotation()
+	{
+		Quotation q(1, false);
+		Context ctx(q, HandleSet(), false);
+		TS_ASSERT(ctx.is_quoted());
+		TS_ASSERT(!ctx.is_unquoted());
+	}
+
+	void test_Context_is_free_variable()
+	{
+		Context ctx;
+		Handle var = createNode(VARIABLE_NODE, "$x");
+		Handle concept = createNode(CONCEPT_NODE, "foo");
+
+		// Variable should be recognized as free
+		TS_ASSERT(ctx.is_free_variable(var));
+
+		// ConceptNode should not be a free variable
+		TS_ASSERT(!ctx.is_free_variable(concept));
+	}
+
+	void test_Context_is_free_variable_quoted()
+	{
+		Quotation q(1, false);
+		Context ctx(q, HandleSet(), false);
+		Handle var = createNode(VARIABLE_NODE, "$x");
+
+		// Variable in quoted context should not be free
+		TS_ASSERT(!ctx.is_free_variable(var));
+	}
+
+	void test_Context_is_free_variable_shadowed()
+	{
+		Handle var = createNode(VARIABLE_NODE, "$x");
+		HandleSet shadow = {var};
+		Context ctx(Quotation(), shadow, false);
+
+		// Shadowed variable should not be free
+		TS_ASSERT(!ctx.is_free_variable(var));
+	}
+
+	void test_Context_consumable()
+	{
+		Context ctx;
+
+		TS_ASSERT(ctx.consumable(QUOTE_LINK));
+		TS_ASSERT(ctx.consumable(LOCAL_QUOTE_LINK));
+		TS_ASSERT(!ctx.consumable(UNQUOTE_LINK));
+	}
+
+	void test_Context_equality()
+	{
+		Context ctx1;
+		Context ctx2;
+
+		TS_ASSERT(ctx1 == ctx2);
+	}
+
+	// ===================== FindUtils Tests =====================
+
+	void test_is_atom_in_tree_simple()
+	{
+		Handle a = createNode(CONCEPT_NODE, "a");
+		Handle b = createNode(CONCEPT_NODE, "b");
+		Handle list = createLink({a, b}, LIST_LINK);
+
+		TS_ASSERT(is_atom_in_tree(list, a));
+		TS_ASSERT(is_atom_in_tree(list, b));
+		TS_ASSERT(is_atom_in_tree(list, list));
+	}
+
+	void test_is_atom_in_tree_nested()
+	{
+		Handle a = createNode(CONCEPT_NODE, "a");
+		Handle b = createNode(CONCEPT_NODE, "b");
+		Handle c = createNode(CONCEPT_NODE, "c");
+		Handle inner = createLink({a, b}, LIST_LINK);
+		Handle outer = createLink({inner, c}, LIST_LINK);
+
+		TS_ASSERT(is_atom_in_tree(outer, a));
+		TS_ASSERT(is_atom_in_tree(outer, b));
+		TS_ASSERT(is_atom_in_tree(outer, c));
+		TS_ASSERT(is_atom_in_tree(outer, inner));
+	}
+
+	void test_is_atom_in_tree_not_found()
+	{
+		Handle a = createNode(CONCEPT_NODE, "a");
+		Handle b = createNode(CONCEPT_NODE, "b");
+		Handle c = createNode(CONCEPT_NODE, "c");
+		Handle list = createLink({a, b}, LIST_LINK);
+
+		TS_ASSERT(!is_atom_in_tree(list, c));
+	}
+
+	void test_is_closed()
+	{
+		Handle a = createNode(CONCEPT_NODE, "a");
+		Handle var = createNode(VARIABLE_NODE, "$x");
+		Handle list_closed = createLink({a}, LIST_LINK);
+		Handle list_open = createLink({a, var}, LIST_LINK);
+
+		TS_ASSERT(is_closed(a));
+		TS_ASSERT(!is_closed(var));
+		TS_ASSERT(is_closed(list_closed));
+		TS_ASSERT(!is_closed(list_open));
+	}
+
+	void test_get_free_variables_simple()
+	{
+		Handle var = createNode(VARIABLE_NODE, "$x");
+		HandleSet fv = get_free_variables(var);
+		TS_ASSERT_EQUALS(fv.size(), 1);
+		TS_ASSERT(fv.count(var) == 1);
+	}
+
+	void test_get_free_variables_concept()
+	{
+		Handle a = createNode(CONCEPT_NODE, "a");
+		HandleSet fv = get_free_variables(a);
+		TS_ASSERT(fv.empty());
+	}
+
+	void test_get_free_variables_link()
+	{
+		Handle var1 = createNode(VARIABLE_NODE, "$x");
+		Handle var2 = createNode(VARIABLE_NODE, "$y");
+		Handle a = createNode(CONCEPT_NODE, "a");
+		Handle list = createLink({var1, a, var2}, LIST_LINK);
+
+		HandleSet fv = get_free_variables(list);
+		TS_ASSERT_EQUALS(fv.size(), 2);
+		TS_ASSERT(fv.count(var1) == 1);
+		TS_ASSERT(fv.count(var2) == 1);
+	}
+
+	void test_get_free_variables_glob()
+	{
+		Handle glob = createNode(GLOB_NODE, "$X");
+		HandleSet fv = get_free_variables(glob);
+		TS_ASSERT_EQUALS(fv.size(), 1);
+		TS_ASSERT(fv.count(glob) == 1);
+	}
+
+	void test_any_atom_in_tree()
+	{
+		Handle a = createNode(CONCEPT_NODE, "a");
+		Handle b = createNode(CONCEPT_NODE, "b");
+		Handle c = createNode(CONCEPT_NODE, "c");
+		Handle list = createLink({a, b}, LIST_LINK);
+
+		HandleSet atoms1 = {a, c};
+		HandleSet atoms2 = {c};
+
+		TS_ASSERT(any_atom_in_tree(list, atoms1));
+		TS_ASSERT(!any_atom_in_tree(list, atoms2));
+	}
+
+	void test_contains_atomtype()
+	{
+		Handle a = createNode(CONCEPT_NODE, "a");
+		Handle var = createNode(VARIABLE_NODE, "$x");
+		Handle list = createLink({a, var}, LIST_LINK);
+
+		TS_ASSERT(contains_atomtype(list, VARIABLE_NODE));
+		TS_ASSERT(contains_atomtype(list, CONCEPT_NODE));
+		TS_ASSERT(!contains_atomtype(list, NUMBER_NODE));
+	}
+
+	void test_contains_atomtype_count()
+	{
+		Handle var1 = createNode(VARIABLE_NODE, "$x");
+		Handle var2 = createNode(VARIABLE_NODE, "$y");
+		Handle a = createNode(CONCEPT_NODE, "a");
+		Handle list = createLink({var1, a, var2}, LIST_LINK);
+
+		TS_ASSERT_EQUALS(contains_atomtype_count(list, VARIABLE_NODE), 2);
+		TS_ASSERT_EQUALS(contains_atomtype_count(list, CONCEPT_NODE), 1);
+		TS_ASSERT_EQUALS(contains_atomtype_count(list, NUMBER_NODE), 0);
+	}
+
+	void test_get_all_uniq_atoms()
+	{
+		Handle a = createNode(CONCEPT_NODE, "a");
+		Handle b = createNode(CONCEPT_NODE, "b");
+		Handle list = createLink({a, b}, LIST_LINK);
+
+		HandleSet all = get_all_uniq_atoms(list);
+		TS_ASSERT_EQUALS(all.size(), 3); // a, b, and list itself
+		TS_ASSERT(all.count(a) == 1);
+		TS_ASSERT(all.count(b) == 1);
+		TS_ASSERT(all.count(list) == 1);
+	}
+
+	void test_get_all_uniq_atoms_nested()
+	{
+		Handle a = createNode(CONCEPT_NODE, "a");
+		Handle b = createNode(CONCEPT_NODE, "b");
+		Handle inner = createLink({a}, LIST_LINK);
+		Handle outer = createLink({inner, b}, LIST_LINK);
+
+		HandleSet all = get_all_uniq_atoms(outer);
+		TS_ASSERT_EQUALS(all.size(), 4);
+		TS_ASSERT(all.count(a) == 1);
+		TS_ASSERT(all.count(b) == 1);
+		TS_ASSERT(all.count(inner) == 1);
+		TS_ASSERT(all.count(outer) == 1);
+	}
+
+	void test_num_unquoted_unscoped_in_tree()
+	{
+		Handle var1 = createNode(VARIABLE_NODE, "$x");
+		Handle var2 = createNode(VARIABLE_NODE, "$y");
+		Handle a = createNode(CONCEPT_NODE, "a");
+		Handle list = createLink({var1, a, var2}, LIST_LINK);
+
+		HandleSet vars = {var1, var2};
+		TS_ASSERT_EQUALS(num_unquoted_unscoped_in_tree(list, vars), 2);
+	}
+
+	void test_is_constant()
+	{
+		Handle a = createNode(CONCEPT_NODE, "a");
+		Handle var = createNode(VARIABLE_NODE, "$x");
+
+		TS_ASSERT(is_constant(a));
+		TS_ASSERT(!is_constant(var));
+	}
+
+	// ===================== FindAtoms Tests =====================
+
+	void test_FindAtoms_by_type()
+	{
+		Handle var1 = createNode(VARIABLE_NODE, "$x");
+		Handle var2 = createNode(VARIABLE_NODE, "$y");
+		Handle a = createNode(CONCEPT_NODE, "a");
+		Handle list = createLink({var1, a, var2}, LIST_LINK);
+
+		FindAtoms fa(VARIABLE_NODE, false);
+		fa.search_set(list);
+
+		TS_ASSERT_EQUALS(fa.varset.size(), 2);
+		TS_ASSERT(fa.varset.count(var1) == 1);
+		TS_ASSERT(fa.varset.count(var2) == 1);
+	}
+
+	void test_FindAtoms_by_atom()
+	{
+		Handle a = createNode(CONCEPT_NODE, "a");
+		Handle b = createNode(CONCEPT_NODE, "b");
+		Handle list = createLink({a, b}, LIST_LINK);
+
+		FindAtoms fa(a);
+		fa.search_set(list);
+
+		TS_ASSERT_EQUALS(fa.varset.size(), 1);
+		TS_ASSERT(fa.varset.count(a) == 1);
+	}
+
+	void test_FindAtoms_holders()
+	{
+		Handle var = createNode(VARIABLE_NODE, "$x");
+		Handle a = createNode(CONCEPT_NODE, "a");
+		Handle inner = createLink({var, a}, LIST_LINK);
+		Handle outer = createLink({inner}, LIST_LINK);
+
+		FindAtoms fa(VARIABLE_NODE, false);
+		fa.search_set(outer);
+
+		TS_ASSERT_EQUALS(fa.varset.size(), 1);
+		TS_ASSERT(fa.holders.count(inner) == 1);
+		TS_ASSERT(fa.holders.count(outer) == 1);
+		TS_ASSERT(fa.least_holders.count(inner) == 1);
+	}
+
+	// ===================== FreeVariables Tests =====================
+
+	void test_FreeVariables_find_simple()
+	{
+		Handle var = createNode(VARIABLE_NODE, "$x");
+		Handle a = createNode(CONCEPT_NODE, "a");
+		Handle list = createLink({var, a}, LIST_LINK);
+
+		FreeVariables fv;
+		fv.find_variables(list);
+
+		TS_ASSERT_EQUALS(fv.size(), 1);
+		TS_ASSERT(fv.varset_contains(var));
+	}
+
+	void test_FreeVariables_find_multiple()
+	{
+		Handle var1 = createNode(VARIABLE_NODE, "$x");
+		Handle var2 = createNode(VARIABLE_NODE, "$y");
+		Handle a = createNode(CONCEPT_NODE, "a");
+		Handle list = createLink({var1, a, var2}, LIST_LINK);
+
+		FreeVariables fv;
+		fv.find_variables(list);
+
+		TS_ASSERT_EQUALS(fv.size(), 2);
+		TS_ASSERT(fv.varset_contains(var1));
+		TS_ASSERT(fv.varset_contains(var2));
+	}
+
+	void test_FreeVariables_empty()
+	{
+		FreeVariables fv;
+		TS_ASSERT(fv.empty());
+		TS_ASSERT_EQUALS(fv.size(), 0);
+	}
+
+	void test_FreeVariables_is_identical()
+	{
+		Handle var1 = createNode(VARIABLE_NODE, "$x");
+		Handle var2 = createNode(VARIABLE_NODE, "$x");
+
+		FreeVariables fv1({var1});
+		FreeVariables fv2({var2});
+
+		TS_ASSERT(fv1.is_identical(fv2));
+	}
+
+	void test_FreeVariables_is_not_identical()
+	{
+		Handle var1 = createNode(VARIABLE_NODE, "$x");
+		Handle var2 = createNode(VARIABLE_NODE, "$y");
+
+		FreeVariables fv1({var1});
+		FreeVariables fv2({var2});
+
+		TS_ASSERT(!fv1.is_identical(fv2));
+	}
+
+	void test_FreeVariables_erase()
+	{
+		Handle var1 = createNode(VARIABLE_NODE, "$x");
+		Handle var2 = createNode(VARIABLE_NODE, "$y");
+
+		FreeVariables fv({var1, var2});
+		TS_ASSERT_EQUALS(fv.size(), 2);
+
+		fv.erase(var1);
+		TS_ASSERT_EQUALS(fv.size(), 1);
+		TS_ASSERT(!fv.varset_contains(var1));
+		TS_ASSERT(fv.varset_contains(var2));
+	}
+
+	void test_FreeVariables_make_sequence()
+	{
+		Handle var1 = createNode(VARIABLE_NODE, "$x");
+		Handle var2 = createNode(VARIABLE_NODE, "$y");
+		Handle a = createNode(CONCEPT_NODE, "a");
+		Handle b = createNode(CONCEPT_NODE, "b");
+
+		FreeVariables fv({var1, var2});
+
+		HandleMap varmap = {{var1, a}, {var2, b}};
+		HandleSeq seq = fv.make_sequence(varmap);
+
+		TS_ASSERT_EQUALS(seq.size(), 2);
+		TS_ASSERT(seq[0] == a || seq[1] == a);
+		TS_ASSERT(seq[0] == b || seq[1] == b);
+	}
+
+	void test_FreeVariables_comparison()
+	{
+		Handle var1 = createNode(VARIABLE_NODE, "$a");
+		Handle var2 = createNode(VARIABLE_NODE, "$b");
+
+		FreeVariables fv1({var1});
+		FreeVariables fv2({var2});
+
+		// Comparison is based on varseq
+		bool less1 = fv1 < fv2;
+		bool less2 = fv2 < fv1;
+		TS_ASSERT(less1 || less2 || fv1.is_identical(fv2));
+	}
+
+	// ===================== unquoted_below Tests =====================
+
+	void test_unquoted_below_simple()
+	{
+		Handle a = createNode(CONCEPT_NODE, "a");
+		TS_ASSERT(!unquoted_below(a));
+	}
+
+	void test_unquoted_below_with_unquote()
+	{
+		Handle a = createNode(CONCEPT_NODE, "a");
+		Handle unquote = createLink({a}, UNQUOTE_LINK);
+
+		TS_ASSERT(unquoted_below(unquote));
+	}
+
+	void test_unquoted_below_balanced()
+	{
+		Handle a = createNode(CONCEPT_NODE, "a");
+		Handle unquote = createLink({a}, UNQUOTE_LINK);
+		Handle quote = createLink({unquote}, QUOTE_LINK);
+
+		// Quote balances out unquote
+		TS_ASSERT(!unquoted_below(quote));
+	}
+
+	void test_unquoted_below_handleseq()
+	{
+		Handle a = createNode(CONCEPT_NODE, "a");
+		Handle b = createNode(CONCEPT_NODE, "b");
+		Handle unquote = createLink({a}, UNQUOTE_LINK);
+
+		HandleSeq hs1 = {a, b};
+		HandleSeq hs2 = {a, unquote};
+
+		TS_ASSERT(!unquoted_below(hs1));
+		TS_ASSERT(unquoted_below(hs2));
+	}
+
+	// ===================== QuoteLink Tests =====================
+
+	void test_QuoteLink_create()
+	{
+		Handle a = createNode(CONCEPT_NODE, "a");
+		Handle quote = createLink({a}, QUOTE_LINK);
+
+		TS_ASSERT(quote->get_type() == QUOTE_LINK);
+		TS_ASSERT_EQUALS(quote->get_arity(), 1);
+	}
+
+	void test_UnquoteLink_create()
+	{
+		Handle a = createNode(CONCEPT_NODE, "a");
+		Handle unquote = createLink({a}, UNQUOTE_LINK);
+
+		TS_ASSERT(unquote->get_type() == UNQUOTE_LINK);
+		TS_ASSERT_EQUALS(unquote->get_arity(), 1);
+	}
+
+	void test_LocalQuoteLink_create()
+	{
+		Handle a = createNode(CONCEPT_NODE, "a");
+		Handle local_quote = createLink({a}, LOCAL_QUOTE_LINK);
+
+		TS_ASSERT(local_quote->get_type() == LOCAL_QUOTE_LINK);
+		TS_ASSERT_EQUALS(local_quote->get_arity(), 1);
+	}
+
+	// ===================== Edge Cases =====================
+
+	void test_empty_link_free_variables()
+	{
+		Handle empty_list = createLink(HandleSeq(), LIST_LINK);
+		HandleSet fv = get_free_variables(empty_list);
+		TS_ASSERT(fv.empty());
+	}
+
+	void test_deeply_nested_free_variables()
+	{
+		Handle var = createNode(VARIABLE_NODE, "$x");
+		Handle l1 = createLink({var}, LIST_LINK);
+		Handle l2 = createLink({l1}, LIST_LINK);
+		Handle l3 = createLink({l2}, LIST_LINK);
+		Handle l4 = createLink({l3}, LIST_LINK);
+
+		HandleSet fv = get_free_variables(l4);
+		TS_ASSERT_EQUALS(fv.size(), 1);
+		TS_ASSERT(fv.count(var) == 1);
+	}
+
+	void test_duplicate_variables()
+	{
+		Handle var = createNode(VARIABLE_NODE, "$x");
+		Handle list = createLink({var, var, var}, LIST_LINK);
+
+		HandleSet fv = get_free_variables(list);
+		TS_ASSERT_EQUALS(fv.size(), 1); // Duplicates should be deduplicated
+		TS_ASSERT(fv.count(var) == 1);
+	}
+
+	void test_FreeVariables_to_string()
+	{
+		Handle var = createNode(VARIABLE_NODE, "$x");
+		FreeVariables fv({var});
+
+		std::string s = fv.to_string();
+		TS_ASSERT(!s.empty());
+		TS_ASSERT(s.find("varseq") != std::string::npos);
+	}
+};

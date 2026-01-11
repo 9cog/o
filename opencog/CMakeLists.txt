@@ -2,8 +2,17 @@
 # Unified OpenCog CMakeLists.txt
 # Combines cogutil, atomspace, and cogserver components
 
-# The atom_types.h file is written to the build directory
+# Include directories for the unified build
+# CMAKE_SOURCE_DIR is needed for includes like <opencog/util/platform.h>
+# CMAKE_BINARY_DIR is needed for generated atom_types.h
+INCLUDE_DIRECTORIES(${CMAKE_SOURCE_DIR})
 INCLUDE_DIRECTORIES(${CMAKE_BINARY_DIR})
+
+# Enable testing without installing first.
+# Must be declared early as subdirectories use it.
+IF (HAVE_GUILE)
+    DECLARE_GUILE_CONFIG_TARGET(SCM_CONFIG "opencog cs-config" "OPENCOG_TEST")
+ENDIF (HAVE_GUILE)
 
 # ============================================================
 # cogutil components
@@ -18,20 +27,21 @@ ADD_SUBDIRECTORY(atomspace)
 ADD_SUBDIRECTORY(persist)
 ADD_SUBDIRECTORY(query)
 ADD_SUBDIRECTORY(eval)
-ADD_SUBDIRECTORY(guile)
-ADD_SUBDIRECTORY(scm)
-ADD_SUBDIRECTORY(sheaf)
+IF (HAVE_GUILE)
+    ADD_SUBDIRECTORY(guile)
+    ADD_SUBDIRECTORY(scm)
+ENDIF (HAVE_GUILE)
+# ADD_SUBDIRECTORY(sheaf) -- no CMakeLists.txt, documentation only
 ADD_SUBDIRECTORY(cython)
 
 # ============================================================
 # cogserver components
 # ============================================================
-# Enable testing without installing first.
-DECLARE_GUILE_CONFIG_TARGET(SCM_CONFIG "opencog cs-config" "OPENCOG_TEST")
-
 ADD_SUBDIRECTORY(network)
 ADD_SUBDIRECTORY(cogserver)
 
-WRITE_GUILE_CONFIG(${GUILE_BIN_DIR}/opencog/cs-config.scm SCM_CONFIG TRUE)
-WRITE_GUILE_CONFIG(${GUILE_BIN_DIR}/opencog/cs-config-installable.scm SCM_CONFIG FALSE)
-INSTALL(FILES ${GUILE_BIN_DIR}/opencog/cs-config-installable.scm DESTINATION ${GUILE_SITE_DIR}/opencog RENAME cs-config.scm)
+IF (HAVE_GUILE)
+    WRITE_GUILE_CONFIG(${GUILE_BIN_DIR}/opencog/cs-config.scm SCM_CONFIG TRUE)
+    WRITE_GUILE_CONFIG(${GUILE_BIN_DIR}/opencog/cs-config-installable.scm SCM_CONFIG FALSE)
+    INSTALL(FILES ${GUILE_BIN_DIR}/opencog/cs-config-installable.scm DESTINATION ${GUILE_SITE_DIR}/opencog RENAME cs-config.scm)
+ENDIF (HAVE_GUILE)
