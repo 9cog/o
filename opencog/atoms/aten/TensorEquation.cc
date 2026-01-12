@@ -671,6 +671,8 @@ TensorProgram::TensorProgram(const std::string& name, ReasoningMode mode)
 	  _convergence_threshold(1e-6),
 	  _learning_rate(0.01),
 	  _track_gradients(false),
+	  _optimizer(std::make_shared<SGDOptimizer>(0.01)),
+	  _tape(std::make_shared<GradientTape>()),
 	  _forward_count(0),
 	  _backward_count(0)
 {
@@ -1248,6 +1250,564 @@ TensorEquationPtr opencog::parse_datalog_rule(const std::string& rule)
 		einsum_notation,
 		Nonlinearity::THRESHOLD,  // Default to Boolean mode
 		ReasoningMode::BOOLEAN);
+}
+
+// ============================================================
+// Optimizer Implementation
+// ============================================================
+
+Optimizer::Optimizer(double lr, LRSchedule schedule)
+	: _learning_rate(lr)
+	, _initial_lr(lr)
+	, _schedule(schedule)
+	, _step_count(0)
+	, _warmup_steps(1000)
+	, _decay_rate(0.96)
+{
+}
+
+void Optimizer::step_schedule()
+{
+	_step_count++;
+
+	switch (_schedule)
+	{
+		case LRSchedule::CONSTANT:
+			break;
+
+		case LRSchedule::STEP:
+			// Decay every 1000 steps
+			if (_step_count % 1000 == 0)
+				_learning_rate *= _decay_rate;
+			break;
+
+		case LRSchedule::EXPONENTIAL:
+			_learning_rate = _initial_lr * std::pow(_decay_rate, _step_count / 1000.0);
+			break;
+
+		case LRSchedule::COSINE:
+		{
+			// Cosine annealing
+			double progress = (double)_step_count / 10000.0;
+			_learning_rate = _initial_lr * 0.5 * (1.0 + std::cos(M_PI * progress));
+			break;
+		}
+
+		case LRSchedule::WARMUP:
+			if (_step_count < _warmup_steps)
+				_learning_rate = _initial_lr * ((double)_step_count / _warmup_steps);
+			else
+				_learning_rate = _initial_lr;
+			break;
+	}
+}
+
+void Optimizer::reset()
+{
+	_step_count = 0;
+	_learning_rate = _initial_lr;
+}
+
+// ============================================================
+// SGD Optimizer Implementation
+// ============================================================
+
+SGDOptimizer::SGDOptimizer(double lr, double momentum, double weight_decay)
+	: Optimizer(lr)
+	, _momentum(momentum)
+	, _weight_decay(weight_decay)
+{
+}
+
+ATenValuePtr SGDOptimizer::update(const ATenValuePtr& param,
+                                   const ATenValuePtr& grad)
+{
+	if (!param || !grad) return param;
+
+	auto param_vec = param->to_vector();
+	auto grad_vec = grad->to_vector();
+	auto shape = param->shape();
+
+	if (param_vec.size() != grad_vec.size())
+		return param;
+
+	void* key = param.get();
+
+	// Initialize velocity if needed
+	if (_momentum > 0 && _velocity.find(key) == _velocity.end())
+	{
+		std::vector<double> zeros(param_vec.size(), 0.0);
+		_velocity[key] = createATenFromVector(zeros, shape);
+	}
+
+	std::vector<double> updated(param_vec.size());
+
+	if (_momentum > 0)
+	{
+		auto vel_vec = _velocity[key]->to_vector();
+		for (size_t i = 0; i < param_vec.size(); i++)
+		{
+			// Apply weight decay
+			double g = grad_vec[i] + _weight_decay * param_vec[i];
+
+			// Update velocity: v = momentum * v + lr * g
+			vel_vec[i] = _momentum * vel_vec[i] + _learning_rate * g;
+
+			// Update param: p = p - v
+			updated[i] = param_vec[i] - vel_vec[i];
+		}
+		_velocity[key] = createATenFromVector(vel_vec, shape);
+	}
+	else
+	{
+		for (size_t i = 0; i < param_vec.size(); i++)
+		{
+			double g = grad_vec[i] + _weight_decay * param_vec[i];
+			updated[i] = param_vec[i] - _learning_rate * g;
+		}
+	}
+
+	step_schedule();
+	return createATenFromVector(updated, shape);
+}
+
+void SGDOptimizer::reset()
+{
+	Optimizer::reset();
+	_velocity.clear();
+}
+
+// ============================================================
+// Adam Optimizer Implementation
+// ============================================================
+
+AdamOptimizer::AdamOptimizer(double lr, double beta1, double beta2,
+                             double epsilon, double weight_decay)
+	: Optimizer(lr)
+	, _beta1(beta1)
+	, _beta2(beta2)
+	, _epsilon(epsilon)
+	, _weight_decay(weight_decay)
+{
+}
+
+ATenValuePtr AdamOptimizer::update(const ATenValuePtr& param,
+                                    const ATenValuePtr& grad)
+{
+	if (!param || !grad) return param;
+
+	auto param_vec = param->to_vector();
+	auto grad_vec = grad->to_vector();
+	auto shape = param->shape();
+
+	if (param_vec.size() != grad_vec.size())
+		return param;
+
+	void* key = param.get();
+
+	// Initialize moment estimates if needed
+	if (_m.find(key) == _m.end())
+	{
+		std::vector<double> zeros(param_vec.size(), 0.0);
+		_m[key] = createATenFromVector(zeros, shape);
+		_v[key] = createATenFromVector(zeros, shape);
+	}
+
+	auto m_vec = _m[key]->to_vector();
+	auto v_vec = _v[key]->to_vector();
+
+	// Bias correction terms
+	double bias_correction1 = 1.0 - std::pow(_beta1, _step_count + 1);
+	double bias_correction2 = 1.0 - std::pow(_beta2, _step_count + 1);
+
+	std::vector<double> updated(param_vec.size());
+
+	for (size_t i = 0; i < param_vec.size(); i++)
+	{
+		// Apply weight decay (decoupled as in AdamW)
+		double g = grad_vec[i];
+		if (_weight_decay > 0)
+			param_vec[i] -= _learning_rate * _weight_decay * param_vec[i];
+
+		// Update first moment: m = beta1 * m + (1 - beta1) * g
+		m_vec[i] = _beta1 * m_vec[i] + (1.0 - _beta1) * g;
+
+		// Update second moment: v = beta2 * v + (1 - beta2) * g^2
+		v_vec[i] = _beta2 * v_vec[i] + (1.0 - _beta2) * g * g;
+
+		// Bias-corrected estimates
+		double m_hat = m_vec[i] / bias_correction1;
+		double v_hat = v_vec[i] / bias_correction2;
+
+		// Update parameter: p = p - lr * m_hat / (sqrt(v_hat) + epsilon)
+		updated[i] = param_vec[i] - _learning_rate * m_hat / (std::sqrt(v_hat) + _epsilon);
+	}
+
+	_m[key] = createATenFromVector(m_vec, shape);
+	_v[key] = createATenFromVector(v_vec, shape);
+
+	step_schedule();
+	return createATenFromVector(updated, shape);
+}
+
+void AdamOptimizer::reset()
+{
+	Optimizer::reset();
+	_m.clear();
+	_v.clear();
+}
+
+// ============================================================
+// Sparse Tensor Implementation
+// ============================================================
+
+SparseTensor::SparseTensor(const std::vector<int64_t>& shape)
+	: _shape(shape), _nnz(0)
+{
+}
+
+double SparseTensor::get(const std::vector<int64_t>& indices) const
+{
+	if (indices.size() != _shape.size())
+		return 0.0;
+
+	// Linear search (could use hash map for better performance)
+	for (size_t i = 0; i < _indices.size(); i++)
+	{
+		if (_indices[i] == indices)
+			return _values[i];
+	}
+	return 0.0;
+}
+
+void SparseTensor::set(const std::vector<int64_t>& indices, double value)
+{
+	if (indices.size() != _shape.size())
+		return;
+
+	// Check if already exists
+	for (size_t i = 0; i < _indices.size(); i++)
+	{
+		if (_indices[i] == indices)
+		{
+			if (std::abs(value) < 1e-10)
+			{
+				// Remove entry
+				_indices.erase(_indices.begin() + i);
+				_values.erase(_values.begin() + i);
+				_nnz--;
+			}
+			else
+			{
+				_values[i] = value;
+			}
+			return;
+		}
+	}
+
+	// Add new entry if non-zero
+	if (std::abs(value) >= 1e-10)
+	{
+		add_entry(indices, value);
+	}
+}
+
+void SparseTensor::add_entry(const std::vector<int64_t>& indices, double value)
+{
+	_indices.push_back(indices);
+	_values.push_back(value);
+	_nnz++;
+}
+
+ATenValuePtr SparseTensor::to_dense() const
+{
+	// Compute total size
+	int64_t total = 1;
+	for (int64_t dim : _shape)
+		total *= dim;
+
+	std::vector<double> data(total, 0.0);
+
+	// Fill in non-zero values
+	for (size_t i = 0; i < _nnz; i++)
+	{
+		int64_t linear_idx = 0;
+		int64_t stride = 1;
+		for (int j = _shape.size() - 1; j >= 0; j--)
+		{
+			linear_idx += _indices[i][j] * stride;
+			stride *= _shape[j];
+		}
+		if (linear_idx < total)
+			data[linear_idx] = _values[i];
+	}
+
+	return createATenFromVector(data, _shape);
+}
+
+SparseTensorPtr SparseTensor::from_dense(const ATenValuePtr& dense,
+                                          double threshold)
+{
+	if (!dense) return nullptr;
+
+	auto shape = dense->shape();
+	auto data = dense->to_vector();
+
+	auto sparse = std::make_shared<SparseTensor>(shape);
+
+	// Find non-zero elements
+	std::vector<int64_t> indices(shape.size());
+	std::function<void(size_t, int64_t)> iterate;
+	iterate = [&](size_t dim, int64_t base_idx) {
+		if (dim >= shape.size())
+		{
+			double value = data[base_idx];
+			if (std::abs(value) > threshold)
+			{
+				sparse->add_entry(indices, value);
+			}
+		}
+		else
+		{
+			int64_t stride = 1;
+			for (size_t d = dim + 1; d < shape.size(); d++)
+				stride *= shape[d];
+
+			for (int64_t i = 0; i < shape[dim]; i++)
+			{
+				indices[dim] = i;
+				iterate(dim + 1, base_idx + i * stride);
+			}
+		}
+	};
+
+	iterate(0, 0);
+	return sparse;
+}
+
+SparseTensorPtr SparseTensor::matmul(const SparseTensor& other) const
+{
+	// Sparse matrix multiplication for 2D tensors
+	if (_shape.size() != 2 || other._shape.size() != 2)
+		return nullptr;
+
+	if (_shape[1] != other._shape[0])
+		return nullptr;
+
+	auto result = std::make_shared<SparseTensor>(
+		std::vector<int64_t>{_shape[0], other._shape[1]});
+
+	// For each non-zero in A and B where A[i,k] and B[k,j] share k
+	std::map<std::pair<int64_t, int64_t>, double> accum;
+
+	for (size_t a = 0; a < _nnz; a++)
+	{
+		int64_t i = _indices[a][0];
+		int64_t k = _indices[a][1];
+		double val_a = _values[a];
+
+		for (size_t b = 0; b < other._nnz; b++)
+		{
+			if (other._indices[b][0] == k)
+			{
+				int64_t j = other._indices[b][1];
+				double val_b = other._values[b];
+				accum[{i, j}] += val_a * val_b;
+			}
+		}
+	}
+
+	for (const auto& [idx, val] : accum)
+	{
+		if (std::abs(val) > 1e-10)
+			result->add_entry({idx.first, idx.second}, val);
+	}
+
+	return result;
+}
+
+SparseTensorPtr SparseTensor::add(const SparseTensor& other) const
+{
+	if (_shape != other._shape)
+		return nullptr;
+
+	auto result = std::make_shared<SparseTensor>(_shape);
+
+	// Copy all entries from this
+	for (size_t i = 0; i < _nnz; i++)
+		result->add_entry(_indices[i], _values[i]);
+
+	// Add entries from other
+	for (size_t i = 0; i < other._nnz; i++)
+	{
+		double existing = result->get(other._indices[i]);
+		result->set(other._indices[i], existing + other._values[i]);
+	}
+
+	return result;
+}
+
+SparseTensorPtr SparseTensor::mul(const SparseTensor& other) const
+{
+	if (_shape != other._shape)
+		return nullptr;
+
+	auto result = std::make_shared<SparseTensor>(_shape);
+
+	// Element-wise: only non-zero where both are non-zero
+	for (size_t i = 0; i < _nnz; i++)
+	{
+		double other_val = other.get(_indices[i]);
+		if (std::abs(other_val) > 1e-10)
+		{
+			result->add_entry(_indices[i], _values[i] * other_val);
+		}
+	}
+
+	return result;
+}
+
+void SparseTensor::threshold(double min_value)
+{
+	std::vector<std::vector<int64_t>> new_indices;
+	std::vector<double> new_values;
+
+	for (size_t i = 0; i < _nnz; i++)
+	{
+		if (std::abs(_values[i]) >= min_value)
+		{
+			new_indices.push_back(_indices[i]);
+			new_values.push_back(_values[i]);
+		}
+	}
+
+	_indices = std::move(new_indices);
+	_values = std::move(new_values);
+	_nnz = _values.size();
+}
+
+double SparseTensor::sparsity() const
+{
+	int64_t total = 1;
+	for (int64_t dim : _shape)
+		total *= dim;
+
+	if (total == 0) return 0.0;
+	return (double)_nnz / total;
+}
+
+std::string SparseTensor::to_string() const
+{
+	std::stringstream ss;
+	ss << "SparseTensor(shape=[";
+	for (size_t i = 0; i < _shape.size(); i++)
+	{
+		if (i > 0) ss << ", ";
+		ss << _shape[i];
+	}
+	ss << "], nnz=" << _nnz << ", sparsity=" << sparsity() << ")";
+	return ss.str();
+}
+
+// ============================================================
+// Gradient Tape Implementation
+// ============================================================
+
+GradientTape::GradientTape()
+	: _recording(false)
+{
+}
+
+void GradientTape::start()
+{
+	_recording = true;
+	_operations.clear();
+	_gradients.clear();
+}
+
+void GradientTape::stop()
+{
+	_recording = false;
+}
+
+void GradientTape::record(
+	const std::string& type,
+	const std::vector<ATenValuePtr>& inputs,
+	const ATenValuePtr& output,
+	std::function<std::vector<ATenValuePtr>(const ATenValuePtr&)> backward_fn)
+{
+	if (!_recording) return;
+
+	Operation op;
+	op.type = type;
+	op.inputs = inputs;
+	op.output = output;
+	op.backward_fn = backward_fn;
+	_operations.push_back(std::move(op));
+}
+
+std::map<void*, ATenValuePtr> GradientTape::backward(
+	const ATenValuePtr& output,
+	const ATenValuePtr& grad_output)
+{
+	_gradients.clear();
+
+	if (!output) return _gradients;
+
+	// Initialize gradient for output
+	_gradients[output.get()] = grad_output;
+
+	// Traverse operations in reverse order
+	for (auto it = _operations.rbegin(); it != _operations.rend(); ++it)
+	{
+		const Operation& op = *it;
+
+		// Check if we have gradient for this operation's output
+		auto grad_it = _gradients.find(op.output.get());
+		if (grad_it == _gradients.end())
+			continue;
+
+		ATenValuePtr grad = grad_it->second;
+
+		// Compute gradients for inputs
+		if (op.backward_fn)
+		{
+			auto input_grads = op.backward_fn(grad);
+
+			for (size_t i = 0; i < input_grads.size() && i < op.inputs.size(); i++)
+			{
+				void* key = op.inputs[i].get();
+				if (_gradients.find(key) == _gradients.end())
+				{
+					_gradients[key] = input_grads[i];
+				}
+				else
+				{
+					// Accumulate gradients
+					_gradients[key] = ATenValueCast(
+						_gradients[key]->add(*input_grads[i]));
+				}
+			}
+		}
+	}
+
+	return _gradients;
+}
+
+ATenValuePtr GradientTape::gradient(const ATenValuePtr& tensor) const
+{
+	if (!tensor) return nullptr;
+
+	auto it = _gradients.find(tensor.get());
+	if (it != _gradients.end())
+		return it->second;
+	return nullptr;
+}
+
+void GradientTape::clear()
+{
+	_operations.clear();
+	_gradients.clear();
 }
 
 // ====================== END OF FILE =======================

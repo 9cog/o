@@ -39,9 +39,13 @@ namespace opencog
 class AtomSpace;
 class TensorEquation;
 class TensorProgram;
+class Optimizer;
+class SparseTensor;
 
 typedef std::shared_ptr<TensorEquation> TensorEquationPtr;
 typedef std::shared_ptr<TensorProgram> TensorProgramPtr;
+typedef std::shared_ptr<Optimizer> OptimizerPtr;
+typedef std::shared_ptr<SparseTensor> SparseTensorPtr;
 
 // ============================================================
 // Reasoning Modes
@@ -139,6 +143,284 @@ enum class Nonlinearity {
  */
 ATenValuePtr apply_nonlinearity(const ATenValuePtr& tensor,
                                  Nonlinearity nl);
+
+// ============================================================
+// Optimizer Classes
+// ============================================================
+
+/**
+ * Learning rate schedule types.
+ */
+enum class LRSchedule {
+	CONSTANT,     // No decay
+	STEP,         // Decay by factor at intervals
+	EXPONENTIAL,  // Continuous exponential decay
+	COSINE,       // Cosine annealing
+	WARMUP        // Linear warmup then constant
+};
+
+/**
+ * Base Optimizer class for gradient-based learning.
+ */
+class Optimizer
+{
+protected:
+	double _learning_rate;
+	double _initial_lr;
+	LRSchedule _schedule;
+	size_t _step_count;
+	size_t _warmup_steps;
+	double _decay_rate;
+
+public:
+	Optimizer(double lr = 0.01, LRSchedule schedule = LRSchedule::CONSTANT);
+	virtual ~Optimizer() = default;
+
+	double learning_rate() const { return _learning_rate; }
+	void set_learning_rate(double lr) { _learning_rate = lr; _initial_lr = lr; }
+	void set_schedule(LRSchedule s) { _schedule = s; }
+	void set_warmup_steps(size_t steps) { _warmup_steps = steps; }
+	void set_decay_rate(double rate) { _decay_rate = rate; }
+
+	/**
+	 * Update learning rate based on schedule.
+	 */
+	virtual void step_schedule();
+
+	/**
+	 * Apply gradient update to parameter.
+	 * @param param Current parameter tensor
+	 * @param grad Gradient tensor
+	 * @return Updated parameter tensor
+	 */
+	virtual ATenValuePtr update(const ATenValuePtr& param,
+	                            const ATenValuePtr& grad) = 0;
+
+	/**
+	 * Reset optimizer state (momentum, etc.)
+	 */
+	virtual void reset();
+
+	size_t step_count() const { return _step_count; }
+};
+
+/**
+ * Stochastic Gradient Descent with optional momentum.
+ */
+class SGDOptimizer : public Optimizer
+{
+private:
+	double _momentum;
+	double _weight_decay;
+	std::map<void*, ATenValuePtr> _velocity;  // Momentum buffer
+
+public:
+	SGDOptimizer(double lr = 0.01, double momentum = 0.0,
+	             double weight_decay = 0.0);
+
+	void set_momentum(double m) { _momentum = m; }
+	double momentum() const { return _momentum; }
+
+	ATenValuePtr update(const ATenValuePtr& param,
+	                    const ATenValuePtr& grad) override;
+	void reset() override;
+};
+
+typedef std::shared_ptr<SGDOptimizer> SGDOptimizerPtr;
+
+/**
+ * Adam optimizer with adaptive learning rates.
+ * Combines momentum (first moment) with RMSprop (second moment).
+ */
+class AdamOptimizer : public Optimizer
+{
+private:
+	double _beta1;        // First moment decay (default 0.9)
+	double _beta2;        // Second moment decay (default 0.999)
+	double _epsilon;      // Numerical stability (default 1e-8)
+	double _weight_decay; // L2 regularization
+
+	// Per-parameter state
+	std::map<void*, ATenValuePtr> _m;  // First moment estimates
+	std::map<void*, ATenValuePtr> _v;  // Second moment estimates
+
+public:
+	AdamOptimizer(double lr = 0.001, double beta1 = 0.9,
+	              double beta2 = 0.999, double epsilon = 1e-8,
+	              double weight_decay = 0.0);
+
+	void set_betas(double beta1, double beta2) {
+		_beta1 = beta1;
+		_beta2 = beta2;
+	}
+
+	ATenValuePtr update(const ATenValuePtr& param,
+	                    const ATenValuePtr& grad) override;
+	void reset() override;
+};
+
+typedef std::shared_ptr<AdamOptimizer> AdamOptimizerPtr;
+
+// ============================================================
+// Sparse Tensor
+// ============================================================
+
+/**
+ * SparseTensor represents a tensor with mostly zero values.
+ * Uses COO (Coordinate) format: lists of (indices, value) pairs.
+ *
+ * Efficient for:
+ * - Large relation tensors with few true facts
+ * - Knowledge graph representations
+ * - Symbolic reasoning with discrete facts
+ */
+class SparseTensor
+{
+private:
+	std::vector<std::vector<int64_t>> _indices; // List of index tuples
+	std::vector<double> _values;                 // Corresponding values
+	std::vector<int64_t> _shape;                 // Dense shape
+	size_t _nnz;                                 // Number of non-zeros
+
+public:
+	SparseTensor(const std::vector<int64_t>& shape);
+
+	// Access
+	const std::vector<int64_t>& shape() const { return _shape; }
+	size_t nnz() const { return _nnz; }
+	size_t ndim() const { return _shape.size(); }
+
+	/**
+	 * Get value at indices (returns 0 if not set).
+	 */
+	double get(const std::vector<int64_t>& indices) const;
+
+	/**
+	 * Set value at indices.
+	 */
+	void set(const std::vector<int64_t>& indices, double value);
+
+	/**
+	 * Add a non-zero entry.
+	 */
+	void add_entry(const std::vector<int64_t>& indices, double value);
+
+	/**
+	 * Get all indices.
+	 */
+	const std::vector<std::vector<int64_t>>& indices() const { return _indices; }
+
+	/**
+	 * Get all values.
+	 */
+	const std::vector<double>& values() const { return _values; }
+
+	/**
+	 * Convert to dense ATenValue.
+	 */
+	ATenValuePtr to_dense() const;
+
+	/**
+	 * Create from dense ATenValue (with threshold for sparsity).
+	 */
+	static SparseTensorPtr from_dense(const ATenValuePtr& dense,
+	                                   double threshold = 1e-10);
+
+	/**
+	 * Sparse matrix multiplication: C = A * B
+	 * Works with sparse A or B, produces sparse result.
+	 */
+	SparseTensorPtr matmul(const SparseTensor& other) const;
+
+	/**
+	 * Element-wise operations with sparse tensors.
+	 */
+	SparseTensorPtr add(const SparseTensor& other) const;
+	SparseTensorPtr mul(const SparseTensor& other) const;
+
+	/**
+	 * Threshold to remove small values.
+	 */
+	void threshold(double min_value);
+
+	/**
+	 * Get sparsity ratio (nnz / total elements).
+	 */
+	double sparsity() const;
+
+	std::string to_string() const;
+};
+
+// ============================================================
+// Gradient Tape for Automatic Differentiation
+// ============================================================
+
+/**
+ * GradientTape records operations for automatic differentiation.
+ * Enable gradient tracking during forward pass, then call
+ * backward() to compute gradients.
+ */
+class GradientTape
+{
+private:
+	struct Operation {
+		std::string type;
+		std::vector<ATenValuePtr> inputs;
+		ATenValuePtr output;
+		std::function<std::vector<ATenValuePtr>(const ATenValuePtr&)> backward_fn;
+	};
+
+	std::vector<Operation> _operations;
+	std::map<void*, ATenValuePtr> _gradients;
+	bool _recording;
+
+public:
+	GradientTape();
+
+	/**
+	 * Start recording operations.
+	 */
+	void start();
+
+	/**
+	 * Stop recording.
+	 */
+	void stop();
+
+	/**
+	 * Check if recording.
+	 */
+	bool is_recording() const { return _recording; }
+
+	/**
+	 * Record an operation.
+	 */
+	void record(const std::string& type,
+	            const std::vector<ATenValuePtr>& inputs,
+	            const ATenValuePtr& output,
+	            std::function<std::vector<ATenValuePtr>(const ATenValuePtr&)> backward_fn);
+
+	/**
+	 * Compute gradients via backpropagation.
+	 * @param output The output tensor to differentiate
+	 * @param grad_output Gradient of loss with respect to output
+	 * @return Map from input tensors to their gradients
+	 */
+	std::map<void*, ATenValuePtr> backward(const ATenValuePtr& output,
+	                                        const ATenValuePtr& grad_output);
+
+	/**
+	 * Get gradient for a specific tensor.
+	 */
+	ATenValuePtr gradient(const ATenValuePtr& tensor) const;
+
+	/**
+	 * Clear recorded operations and gradients.
+	 */
+	void clear();
+};
+
+typedef std::shared_ptr<GradientTape> GradientTapePtr;
 
 // ============================================================
 // Tensor Equation
@@ -284,6 +566,8 @@ private:
 	// For learning
 	double _learning_rate;
 	bool _track_gradients;
+	OptimizerPtr _optimizer;
+	GradientTapePtr _tape;
 
 	// Statistics
 	size_t _forward_count;
@@ -427,6 +711,17 @@ public:
 	 */
 	void set_learning_rate(double lr) { _learning_rate = lr; }
 	double learning_rate() const { return _learning_rate; }
+
+	/**
+	 * Set optimizer for gradient updates.
+	 */
+	void set_optimizer(const OptimizerPtr& opt) { _optimizer = opt; }
+	OptimizerPtr optimizer() const { return _optimizer; }
+
+	/**
+	 * Get gradient tape for automatic differentiation.
+	 */
+	GradientTapePtr tape() const { return _tape; }
 
 	/**
 	 * Enable/disable gradient tracking.

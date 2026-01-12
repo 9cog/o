@@ -948,7 +948,55 @@ void TensorLogic::save_embeddings(const std::string& path)
 
 void TensorLogic::load_embeddings(const std::string& path)
 {
-	// TODO: Implement loading
+	std::lock_guard<std::mutex> lock(_mtx);
+
+	std::ifstream file(path, std::ios::binary);
+	if (!file.is_open())
+		throw RuntimeException(TRACE_INFO, "Cannot open file: %s", path.c_str());
+
+	// Read header
+	int64_t num, dim;
+	file.read(reinterpret_cast<char*>(&num), sizeof(num));
+	file.read(reinterpret_cast<char*>(&dim), sizeof(dim));
+
+	if (dim != _embedding_dim)
+		throw RuntimeException(TRACE_INFO,
+			"Embedding dimension mismatch: file has %ld, expected %ld",
+			dim, _embedding_dim);
+
+	// Read embeddings
+	for (int64_t i = 0; i < num; i++)
+	{
+		// Read atom string
+		int64_t str_len;
+		file.read(reinterpret_cast<char*>(&str_len), sizeof(str_len));
+		std::string atom_str(str_len, '\0');
+		file.read(&atom_str[0], str_len);
+
+		// Read embedding data
+		std::vector<double> emb_data(dim);
+		file.read(reinterpret_cast<char*>(emb_data.data()), dim * sizeof(double));
+
+		// Try to find matching atom in atomspace
+		if (_atomspace)
+		{
+			// Simple heuristic: look for concept node with same name
+			// A full implementation would parse the atom string properly
+			Handle atom = _atomspace->get_node(CONCEPT_NODE, std::string(atom_str));
+			if (atom)
+			{
+				ATenValuePtr emb = createATenFromVector(emb_data, {dim});
+				auto entity_emb = std::make_shared<EntityEmbedding>(atom, emb);
+				_embeddings[atom] = entity_emb;
+
+				if (_embedding_key)
+					_atomspace->set_value(atom, _embedding_key, emb);
+			}
+		}
+	}
+
+	_num_embeddings = _embeddings.size();
+	file.close();
 }
 
 std::string TensorLogic::to_string() const

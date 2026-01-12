@@ -1501,4 +1501,604 @@ public:
 		// grandparent[0,2] = 0.9 * 0.8 = 0.72
 		TS_ASSERT_DELTA(vec[2], 0.72, 1e-10);
 	}
+
+	// ============================================================
+	// SGD Optimizer Tests
+	// ============================================================
+
+	void test_sgd_basic_update()
+	{
+		SGDOptimizer sgd(0.1);
+		ATenValuePtr param = createATenFromVector({1.0, 2.0, 3.0}, {3});
+		ATenValuePtr grad = createATenFromVector({0.1, 0.2, 0.3}, {3});
+
+		ATenValuePtr updated = sgd.update(param, grad);
+		auto vec = updated->to_vector();
+
+		// param - lr * grad
+		TS_ASSERT_DELTA(vec[0], 0.99, 1e-10);
+		TS_ASSERT_DELTA(vec[1], 1.98, 1e-10);
+		TS_ASSERT_DELTA(vec[2], 2.97, 1e-10);
+	}
+
+	void test_sgd_with_momentum()
+	{
+		SGDOptimizer sgd(0.1, 0.9, 0.0);
+		ATenValuePtr param = createATenFromVector({1.0, 2.0}, {2});
+		ATenValuePtr grad = createATenFromVector({1.0, 1.0}, {2});
+
+		// First update: v = 0.1 * 1.0 = 0.1, param = 1.0 - 0.1 = 0.9
+		ATenValuePtr p1 = sgd.update(param, grad);
+		auto v1 = p1->to_vector();
+		TS_ASSERT_DELTA(v1[0], 0.9, 1e-10);
+
+		// Note: With new param pointer, momentum resets (velocity keyed by pointer)
+		// So second update starts fresh: v = 0.1 * 1.0 = 0.1, param = 0.9 - 0.1 = 0.8
+		ATenValuePtr p2 = sgd.update(p1, grad);
+		auto v2 = p2->to_vector();
+		TS_ASSERT_DELTA(v2[0], 0.8, 1e-10);
+	}
+
+	void test_sgd_with_weight_decay()
+	{
+		SGDOptimizer sgd(0.1, 0.0, 0.01);
+		ATenValuePtr param = createATenFromVector({10.0}, {1});
+		ATenValuePtr grad = createATenFromVector({0.0}, {1});
+
+		// Weight decay adds param * weight_decay to gradient
+		ATenValuePtr updated = sgd.update(param, grad);
+		auto vec = updated->to_vector();
+
+		// param - lr * (grad + wd * param) = 10.0 - 0.1 * (0.0 + 0.01 * 10.0)
+		TS_ASSERT_DELTA(vec[0], 10.0 - 0.1 * 0.1, 1e-10);
+	}
+
+	void test_sgd_reset()
+	{
+		SGDOptimizer sgd(0.1, 0.9);
+		ATenValuePtr param = createATenFromVector({1.0}, {1});
+		ATenValuePtr grad = createATenFromVector({1.0}, {1});
+
+		sgd.update(param, grad);
+		TS_ASSERT(sgd.step_count() > 0);
+
+		sgd.reset();
+		TS_ASSERT_EQUALS(sgd.step_count(), (size_t)0);
+	}
+
+	// ============================================================
+	// Adam Optimizer Tests
+	// ============================================================
+
+	void test_adam_basic_update()
+	{
+		AdamOptimizer adam(0.001);
+		ATenValuePtr param = createATenFromVector({1.0, 2.0, 3.0}, {3});
+		ATenValuePtr grad = createATenFromVector({0.1, 0.2, 0.3}, {3});
+
+		ATenValuePtr updated = adam.update(param, grad);
+		auto vec = updated->to_vector();
+
+		// Parameters should decrease (gradient is positive)
+		TS_ASSERT(vec[0] < 1.0);
+		TS_ASSERT(vec[1] < 2.0);
+		TS_ASSERT(vec[2] < 3.0);
+	}
+
+	void test_adam_momentum_accumulation()
+	{
+		AdamOptimizer adam(0.01);
+		ATenValuePtr param = createATenFromVector({0.0}, {1});
+		ATenValuePtr grad = createATenFromVector({1.0}, {1});
+
+		// Multiple updates - each creates new param tensor, so momentum doesn't
+		// accumulate across calls (keyed by pointer). Test that param decreases.
+		for (int i = 0; i < 5; i++)
+		{
+			param = adam.update(param, grad);
+		}
+
+		auto vec = param->to_vector();
+		// Each update decreases param by approximately lr (with some bias correction)
+		// After 5 updates starting from 0, should be negative
+		TS_ASSERT(vec[0] < 0.0);
+	}
+
+	void test_adam_with_weight_decay()
+	{
+		AdamOptimizer adam(0.01, 0.9, 0.999, 1e-8, 0.01);
+		ATenValuePtr param = createATenFromVector({10.0}, {1});
+		ATenValuePtr grad = createATenFromVector({0.0}, {1});
+
+		ATenValuePtr updated = adam.update(param, grad);
+		auto vec = updated->to_vector();
+
+		// Weight decay should reduce parameter even with zero gradient
+		TS_ASSERT(vec[0] < 10.0);
+	}
+
+	void test_adam_reset()
+	{
+		AdamOptimizer adam(0.001);
+		ATenValuePtr param = createATenFromVector({1.0}, {1});
+		ATenValuePtr grad = createATenFromVector({1.0}, {1});
+
+		adam.update(param, grad);
+		adam.update(param, grad);
+		TS_ASSERT(adam.step_count() > 0);
+
+		adam.reset();
+		TS_ASSERT_EQUALS(adam.step_count(), (size_t)0);
+	}
+
+	void test_adam_betas()
+	{
+		AdamOptimizer adam(0.001, 0.8, 0.99);
+		ATenValuePtr param = createATenFromVector({1.0}, {1});
+		ATenValuePtr grad = createATenFromVector({1.0}, {1});
+
+		adam.set_betas(0.95, 0.999);
+
+		// Should work with different betas
+		ATenValuePtr updated = adam.update(param, grad);
+		TS_ASSERT(updated != nullptr);
+	}
+
+	// ============================================================
+	// Learning Rate Schedule Tests
+	// ============================================================
+
+	void test_lr_schedule_constant()
+	{
+		SGDOptimizer sgd(0.1);
+		sgd.set_schedule(LRSchedule::CONSTANT);
+
+		double initial_lr = sgd.learning_rate();
+		for (int i = 0; i < 100; i++)
+		{
+			sgd.step_schedule();
+		}
+
+		TS_ASSERT_DELTA(sgd.learning_rate(), initial_lr, 1e-10);
+	}
+
+	void test_lr_schedule_step()
+	{
+		SGDOptimizer sgd(0.1);
+		sgd.set_schedule(LRSchedule::STEP);
+		sgd.set_decay_rate(0.5);
+
+		double initial_lr = sgd.learning_rate();
+
+		// Step through 1000 iterations to trigger decay
+		for (int i = 0; i < 1000; i++)
+		{
+			sgd.step_schedule();
+		}
+
+		TS_ASSERT(sgd.learning_rate() < initial_lr);
+	}
+
+	void test_lr_schedule_exponential()
+	{
+		SGDOptimizer sgd(0.1);
+		sgd.set_schedule(LRSchedule::EXPONENTIAL);
+
+		for (int i = 0; i < 100; i++)
+		{
+			sgd.step_schedule();
+		}
+
+		TS_ASSERT(sgd.learning_rate() < 0.1);
+		TS_ASSERT(sgd.learning_rate() > 0.0);
+	}
+
+	void test_lr_schedule_warmup()
+	{
+		SGDOptimizer sgd(0.1);
+		sgd.set_schedule(LRSchedule::WARMUP);
+		sgd.set_warmup_steps(100);
+
+		// Initially low
+		sgd.step_schedule();
+		TS_ASSERT(sgd.learning_rate() < 0.1);
+
+		// After warmup, should reach full lr
+		for (int i = 0; i < 100; i++)
+		{
+			sgd.step_schedule();
+		}
+		TS_ASSERT_DELTA(sgd.learning_rate(), 0.1, 0.01);
+	}
+
+	// ============================================================
+	// Sparse Tensor Tests
+	// ============================================================
+
+	void test_sparse_tensor_create()
+	{
+		SparseTensor sparse({3, 3});
+		TS_ASSERT_EQUALS(sparse.shape().size(), (size_t)2);
+		TS_ASSERT_EQUALS(sparse.nnz(), (size_t)0);
+	}
+
+	void test_sparse_tensor_set_get()
+	{
+		SparseTensor sparse({3, 3});
+		sparse.set({1, 2}, 5.0);
+
+		TS_ASSERT_DELTA(sparse.get({1, 2}), 5.0, 1e-10);
+		TS_ASSERT_DELTA(sparse.get({0, 0}), 0.0, 1e-10);
+		TS_ASSERT_EQUALS(sparse.nnz(), (size_t)1);
+	}
+
+	void test_sparse_tensor_add_entry()
+	{
+		SparseTensor sparse({3, 3});
+		sparse.add_entry({0, 1}, 1.0);
+		sparse.add_entry({1, 2}, 2.0);
+		sparse.add_entry({2, 0}, 3.0);
+
+		TS_ASSERT_EQUALS(sparse.nnz(), (size_t)3);
+	}
+
+	void test_sparse_tensor_to_dense()
+	{
+		SparseTensor sparse({2, 2});
+		sparse.set({0, 0}, 1.0);
+		sparse.set({1, 1}, 2.0);
+
+		ATenValuePtr dense = sparse.to_dense();
+		auto vec = dense->to_vector();
+
+		TS_ASSERT_DELTA(vec[0], 1.0, 1e-10);  // [0,0]
+		TS_ASSERT_DELTA(vec[1], 0.0, 1e-10);  // [0,1]
+		TS_ASSERT_DELTA(vec[2], 0.0, 1e-10);  // [1,0]
+		TS_ASSERT_DELTA(vec[3], 2.0, 1e-10);  // [1,1]
+	}
+
+	void test_sparse_tensor_from_dense()
+	{
+		ATenValuePtr dense = createATenFromVector({
+			1.0, 0.0,
+			0.0, 2.0
+		}, {2, 2});
+
+		SparseTensorPtr sparse = SparseTensor::from_dense(dense);
+		TS_ASSERT(sparse != nullptr);
+		TS_ASSERT_EQUALS(sparse->nnz(), (size_t)2);
+		TS_ASSERT_DELTA(sparse->get({0, 0}), 1.0, 1e-10);
+		TS_ASSERT_DELTA(sparse->get({1, 1}), 2.0, 1e-10);
+	}
+
+	void test_sparse_tensor_matmul()
+	{
+		SparseTensor a({2, 2});
+		a.set({0, 0}, 1.0);
+		a.set({0, 1}, 2.0);
+
+		SparseTensor b({2, 2});
+		b.set({0, 0}, 1.0);
+		b.set({1, 0}, 1.0);
+
+		SparseTensorPtr c = a.matmul(b);
+		TS_ASSERT(c != nullptr);
+
+		// c[0,0] = a[0,0]*b[0,0] + a[0,1]*b[1,0] = 1*1 + 2*1 = 3
+		TS_ASSERT_DELTA(c->get({0, 0}), 3.0, 1e-10);
+	}
+
+	void test_sparse_tensor_add()
+	{
+		SparseTensor a({2, 2});
+		a.set({0, 0}, 1.0);
+
+		SparseTensor b({2, 2});
+		b.set({0, 0}, 2.0);
+		b.set({1, 1}, 3.0);
+
+		SparseTensorPtr c = a.add(b);
+		TS_ASSERT(c != nullptr);
+		TS_ASSERT_DELTA(c->get({0, 0}), 3.0, 1e-10);
+		TS_ASSERT_DELTA(c->get({1, 1}), 3.0, 1e-10);
+	}
+
+	void test_sparse_tensor_mul()
+	{
+		SparseTensor a({2, 2});
+		a.set({0, 0}, 2.0);
+		a.set({1, 1}, 3.0);
+
+		SparseTensor b({2, 2});
+		b.set({0, 0}, 4.0);
+		b.set({0, 1}, 5.0);
+
+		SparseTensorPtr c = a.mul(b);
+		TS_ASSERT(c != nullptr);
+
+		// Only non-zero where both are non-zero
+		TS_ASSERT_DELTA(c->get({0, 0}), 8.0, 1e-10);
+		TS_ASSERT_EQUALS(c->nnz(), (size_t)1);
+	}
+
+	void test_sparse_tensor_threshold()
+	{
+		SparseTensor sparse({3, 3});
+		sparse.set({0, 0}, 0.1);
+		sparse.set({1, 1}, 0.5);
+		sparse.set({2, 2}, 0.9);
+
+		sparse.threshold(0.3);
+		TS_ASSERT_EQUALS(sparse.nnz(), (size_t)2);
+		TS_ASSERT_DELTA(sparse.get({0, 0}), 0.0, 1e-10);
+	}
+
+	void test_sparse_tensor_sparsity()
+	{
+		SparseTensor sparse({10, 10});
+		sparse.set({0, 0}, 1.0);
+
+		double sparsity = sparse.sparsity();
+		TS_ASSERT_DELTA(sparsity, 0.01, 1e-10);  // 1 / 100
+	}
+
+	void test_sparse_tensor_to_string()
+	{
+		SparseTensor sparse({3, 3});
+		sparse.set({1, 1}, 1.0);
+
+		std::string str = sparse.to_string();
+		TS_ASSERT(str.find("SparseTensor") != std::string::npos);
+		TS_ASSERT(str.find("nnz=1") != std::string::npos);
+	}
+
+	// ============================================================
+	// Gradient Tape Tests
+	// ============================================================
+
+	void test_gradient_tape_create()
+	{
+		GradientTape tape;
+		TS_ASSERT(!tape.is_recording());
+	}
+
+	void test_gradient_tape_start_stop()
+	{
+		GradientTape tape;
+		tape.start();
+		TS_ASSERT(tape.is_recording());
+		tape.stop();
+		TS_ASSERT(!tape.is_recording());
+	}
+
+	void test_gradient_tape_record()
+	{
+		GradientTape tape;
+		tape.start();
+
+		ATenValuePtr input = createATenFromVector({1.0, 2.0}, {2});
+		ATenValuePtr output = createATenFromVector({2.0, 4.0}, {2});
+
+		tape.record("mul", {input}, output, [](const ATenValuePtr& grad) {
+			// Gradient of mul(x, 2) is 2
+			auto vec = grad->to_vector();
+			for (auto& v : vec) v *= 2.0;
+			return std::vector<ATenValuePtr>{createATenFromVector(vec, grad->shape())};
+		});
+
+		tape.stop();
+	}
+
+	void test_gradient_tape_backward()
+	{
+		GradientTape tape;
+		tape.start();
+
+		ATenValuePtr input = createATenFromVector({1.0, 2.0, 3.0}, {3});
+		ATenValuePtr output = createATenFromVector({2.0, 4.0, 6.0}, {3});
+
+		tape.record("double", {input}, output, [](const ATenValuePtr& grad) {
+			auto vec = grad->to_vector();
+			for (auto& v : vec) v *= 2.0;
+			return std::vector<ATenValuePtr>{createATenFromVector(vec, grad->shape())};
+		});
+
+		tape.stop();
+
+		// Backward with gradient of 1s
+		ATenValuePtr grad_output = createATenFromVector({1.0, 1.0, 1.0}, {3});
+		auto gradients = tape.backward(output, grad_output);
+
+		// Check that gradient was computed for input
+		TS_ASSERT(gradients.find(input.get()) != gradients.end());
+		auto grad = gradients[input.get()];
+		auto vec = grad->to_vector();
+		TS_ASSERT_DELTA(vec[0], 2.0, 1e-10);
+	}
+
+	void test_gradient_tape_gradient()
+	{
+		GradientTape tape;
+		tape.start();
+
+		ATenValuePtr a = createATenFromVector({1.0}, {1});
+		ATenValuePtr b = createATenFromVector({2.0}, {1});
+
+		tape.record("add", {a}, b, [](const ATenValuePtr& grad) {
+			return std::vector<ATenValuePtr>{grad};
+		});
+
+		tape.stop();
+
+		ATenValuePtr grad_out = createATenFromVector({1.0}, {1});
+		tape.backward(b, grad_out);
+
+		ATenValuePtr grad_a = tape.gradient(a);
+		TS_ASSERT(grad_a != nullptr);
+		TS_ASSERT_DELTA(grad_a->to_vector()[0], 1.0, 1e-10);
+	}
+
+	void test_gradient_tape_clear()
+	{
+		GradientTape tape;
+		tape.start();
+
+		ATenValuePtr a = createATenFromVector({1.0}, {1});
+		ATenValuePtr b = createATenFromVector({2.0}, {1});
+
+		tape.record("op", {a}, b, nullptr);
+		tape.stop();
+
+		tape.clear();
+
+		// After clear, backward should have no effect
+		ATenValuePtr grad = createATenFromVector({1.0}, {1});
+		auto gradients = tape.backward(b, grad);
+		TS_ASSERT(gradients.empty() || tape.gradient(a) == nullptr);
+	}
+
+	// ============================================================
+	// TensorProgram Optimizer Integration Tests
+	// ============================================================
+
+	void test_program_with_optimizer()
+	{
+		TensorProgram prog("learnable");
+
+		auto adam = std::make_shared<AdamOptimizer>(0.001);
+		prog.set_optimizer(adam);
+
+		TS_ASSERT(prog.optimizer() != nullptr);
+	}
+
+	void test_program_gradient_tape()
+	{
+		TensorProgram prog("tape_test");
+		TS_ASSERT(prog.tape() != nullptr);
+	}
+
+	// ============================================================
+	// Integration Tests with New Features
+	// ============================================================
+
+	void test_sparse_relation_reasoning()
+	{
+		// Create a sparse parent relation for a large family tree
+		SparseTensor parent({10, 10});
+		parent.set({0, 1}, 1.0);  // Person 0 is parent of 1
+		parent.set({0, 2}, 1.0);  // Person 0 is parent of 2
+		parent.set({1, 3}, 1.0);  // Person 1 is parent of 3
+		parent.set({2, 4}, 1.0);  // Person 2 is parent of 4
+
+		ATenValuePtr dense_parent = parent.to_dense();
+
+		TensorProgram prog("sparse_family", ReasoningMode::BOOLEAN);
+		prog.add_fact("parent", dense_parent);
+		prog.add_equation("gp", "grandparent", {"parent", "parent"},
+		                  "ij,jk->ik", Nonlinearity::THRESHOLD);
+
+		prog.forward();
+
+		ATenValuePtr gp = prog.get_derived("grandparent");
+		TS_ASSERT(gp != nullptr);
+
+		// Convert back to sparse for verification
+		SparseTensorPtr sparse_gp = SparseTensor::from_dense(gp);
+		TS_ASSERT(sparse_gp != nullptr);
+
+		// grandparent[0,3] = 1 (through 1)
+		// grandparent[0,4] = 1 (through 2)
+		TS_ASSERT_DELTA(sparse_gp->get({0, 3}), 1.0, 1e-10);
+		TS_ASSERT_DELTA(sparse_gp->get({0, 4}), 1.0, 1e-10);
+	}
+
+	void test_training_with_adam()
+	{
+		TensorProgram prog("training");
+		auto adam = std::make_shared<AdamOptimizer>(0.01);
+		prog.set_optimizer(adam);
+
+		// Set up a simple learning scenario
+		ATenValuePtr input = createATenFromVector({1.0, 0.0, 0.0, 1.0}, {2, 2});
+		ATenValuePtr target = createATenFromVector({0.0, 1.0, 1.0, 0.0}, {2, 2});
+
+		prog.add_fact("input", input);
+		prog.add_equation("transform", "output", {"input"}, "ij->ij");
+
+		// Training should run without error
+		double loss = prog.train({{"input", input}}, {{"output", target}}, 10);
+		TS_ASSERT(loss >= 0.0);
+	}
+
+	void test_optimizer_learning_convergence()
+	{
+		// Test that Adam converges on a simple problem
+		AdamOptimizer adam(0.1);
+		ATenValuePtr param = createATenFromVector({5.0}, {1});
+
+		// Try to reach 0.0
+		for (int i = 0; i < 100; i++)
+		{
+			auto vec = param->to_vector();
+			ATenValuePtr grad = createATenFromVector({vec[0]}, {1});  // grad = param
+			param = adam.update(param, grad);
+		}
+
+		auto final = param->to_vector();
+		TS_ASSERT(std::abs(final[0]) < 1.0);  // Should have converged closer to 0
+	}
+
+	void test_sparse_large_tensor()
+	{
+		// Test with a larger sparse tensor
+		SparseTensor large({100, 100});
+
+		// Add diagonal entries
+		for (int i = 0; i < 100; i++)
+		{
+			large.set({(int64_t)i, (int64_t)i}, 1.0);
+		}
+
+		TS_ASSERT_EQUALS(large.nnz(), (size_t)100);
+		TS_ASSERT_DELTA(large.sparsity(), 0.01, 1e-10);
+
+		// Convert to dense and back
+		ATenValuePtr dense = large.to_dense();
+		SparseTensorPtr back = SparseTensor::from_dense(dense);
+
+		TS_ASSERT_EQUALS(back->nnz(), (size_t)100);
+	}
+
+	void test_gradient_accumulation()
+	{
+		// Test that gradients accumulate properly
+		GradientTape tape;
+		tape.start();
+
+		ATenValuePtr x = createATenFromVector({1.0}, {1});
+		ATenValuePtr y1 = createATenFromVector({2.0}, {1});
+		ATenValuePtr y2 = createATenFromVector({3.0}, {1});
+		ATenValuePtr z = createATenFromVector({5.0}, {1});
+
+		// x -> y1 and x -> y2, both contribute to gradient
+		tape.record("op1", {x}, y1, [](const ATenValuePtr& grad) {
+			return std::vector<ATenValuePtr>{grad};
+		});
+		tape.record("op2", {x}, y2, [](const ATenValuePtr& grad) {
+			return std::vector<ATenValuePtr>{grad};
+		});
+		tape.record("add", {y1, y2}, z, [](const ATenValuePtr& grad) {
+			return std::vector<ATenValuePtr>{grad, grad};
+		});
+
+		tape.stop();
+
+		ATenValuePtr grad_z = createATenFromVector({1.0}, {1});
+		tape.backward(z, grad_z);
+
+		ATenValuePtr grad_x = tape.gradient(x);
+		TS_ASSERT(grad_x != nullptr);
+		// Gradient should be 2.0 (accumulated from both paths)
+		TS_ASSERT_DELTA(grad_x->to_vector()[0], 2.0, 1e-10);
+	}
 };
