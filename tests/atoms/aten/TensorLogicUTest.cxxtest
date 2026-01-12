@@ -2101,4 +2101,677 @@ public:
 		// Gradient should be 2.0 (accumulated from both paths)
 		TS_ASSERT_DELTA(grad_x->to_vector()[0], 2.0, 1e-10);
 	}
+
+	// ============================================================
+	// Semiring Tests (RAPTL)
+	// ============================================================
+
+	void test_semiring_boolean()
+	{
+		Semiring sr(SemiringType::BOOLEAN);
+		TS_ASSERT_DELTA(sr.zero(), 0.0, 1e-10);
+		TS_ASSERT_DELTA(sr.one(), 1.0, 1e-10);
+
+		// OR operation
+		TS_ASSERT_DELTA(sr.add(0.0, 0.0), 0.0, 1e-10);
+		TS_ASSERT_DELTA(sr.add(1.0, 0.0), 1.0, 1e-10);
+		TS_ASSERT_DELTA(sr.add(0.0, 1.0), 1.0, 1e-10);
+		TS_ASSERT_DELTA(sr.add(1.0, 1.0), 1.0, 1e-10);
+
+		// AND operation
+		TS_ASSERT_DELTA(sr.mul(0.0, 0.0), 0.0, 1e-10);
+		TS_ASSERT_DELTA(sr.mul(1.0, 0.0), 0.0, 1e-10);
+		TS_ASSERT_DELTA(sr.mul(0.0, 1.0), 0.0, 1e-10);
+		TS_ASSERT_DELTA(sr.mul(1.0, 1.0), 1.0, 1e-10);
+	}
+
+	void test_semiring_counting()
+	{
+		Semiring sr(SemiringType::COUNTING);
+
+		// Standard arithmetic
+		TS_ASSERT_DELTA(sr.add(3.0, 4.0), 7.0, 1e-10);
+		TS_ASSERT_DELTA(sr.mul(3.0, 4.0), 12.0, 1e-10);
+	}
+
+	void test_semiring_viterbi()
+	{
+		Semiring sr(SemiringType::VITERBI);
+
+		// max/+ operations (for log probabilities)
+		TS_ASSERT_DELTA(sr.add(-2.0, -3.0), -2.0, 1e-10);  // max
+		TS_ASSERT_DELTA(sr.mul(-2.0, -3.0), -5.0, 1e-10);  // +
+	}
+
+	void test_semiring_tropical()
+	{
+		Semiring sr(SemiringType::TROPICAL);
+
+		// min/+ operations (for shortest path)
+		TS_ASSERT_DELTA(sr.add(2.0, 3.0), 2.0, 1e-10);  // min
+		TS_ASSERT_DELTA(sr.mul(2.0, 3.0), 5.0, 1e-10);  // +
+	}
+
+	void test_semiring_lukasiewicz()
+	{
+		Semiring sr(SemiringType::LUKASIEWICZ);
+
+		// Fuzzy logic: max/min
+		TS_ASSERT_DELTA(sr.add(0.3, 0.7), 0.7, 1e-10);  // max
+		TS_ASSERT_DELTA(sr.mul(0.3, 0.7), 0.3, 1e-10);  // min
+	}
+
+	void test_semiring_tensor_ops()
+	{
+		Semiring sr(SemiringType::BOOLEAN);
+
+		ATenValuePtr a = createATenFromVector({0.0, 1.0, 0.0, 1.0}, {2, 2});
+		ATenValuePtr b = createATenFromVector({1.0, 0.0, 1.0, 1.0}, {2, 2});
+
+		ATenValuePtr sum = sr.tensor_add(a, b);
+		auto vec = sum->to_vector();
+		TS_ASSERT_DELTA(vec[0], 1.0, 1e-10);  // 0 OR 1
+		TS_ASSERT_DELTA(vec[1], 1.0, 1e-10);  // 1 OR 0
+		TS_ASSERT_DELTA(vec[2], 1.0, 1e-10);  // 0 OR 1
+		TS_ASSERT_DELTA(vec[3], 1.0, 1e-10);  // 1 OR 1
+
+		ATenValuePtr prod = sr.tensor_mul(a, b);
+		vec = prod->to_vector();
+		TS_ASSERT_DELTA(vec[0], 0.0, 1e-10);  // 0 AND 1
+		TS_ASSERT_DELTA(vec[1], 0.0, 1e-10);  // 1 AND 0
+		TS_ASSERT_DELTA(vec[2], 0.0, 1e-10);  // 0 AND 1
+		TS_ASSERT_DELTA(vec[3], 1.0, 1e-10);  // 1 AND 1
+	}
+
+	void test_semiring_einsum()
+	{
+		Semiring sr(SemiringType::BOOLEAN);
+
+		ATenValuePtr a = createATenFromVector({1.0, 0.0, 0.0, 1.0}, {2, 2});
+		ATenValuePtr b = createATenFromVector({0.0, 1.0, 1.0, 0.0}, {2, 2});
+
+		ATenValuePtr result = sr.einsum("ij,jk->ik", {a, b});
+		TS_ASSERT(result != nullptr);
+
+		// Boolean semiring thresholds result
+		auto vec = result->to_vector();
+		for (double v : vec)
+		{
+			TS_ASSERT(v == 0.0 || v == 1.0);
+		}
+	}
+
+	void test_semiring_to_string()
+	{
+		Semiring sr(SemiringType::VITERBI);
+		std::string str = sr.to_string();
+		TS_ASSERT(str.find("Viterbi") != std::string::npos);
+	}
+
+	// ============================================================
+	// PLN Truth Value Tests
+	// ============================================================
+
+	void test_pln_truth_value_create()
+	{
+		PLNTruthValue tv(0.8, 0.9);
+		TS_ASSERT_DELTA(tv.strength, 0.8, 1e-10);
+		TS_ASSERT_DELTA(tv.confidence, 0.9, 1e-10);
+	}
+
+	void test_pln_revision()
+	{
+		PLNTruthValue tv1(0.8, 0.5);
+		PLNTruthValue tv2(0.6, 0.5);
+
+		PLNTruthValue revised = tv1.revise(tv2);
+
+		// Strength should be weighted average
+		TS_ASSERT_DELTA(revised.strength, 0.7, 1e-10);
+		// Confidence should increase
+		TS_ASSERT(revised.confidence > 0.5);
+	}
+
+	void test_pln_deduction()
+	{
+		PLNTruthValue ab(0.9, 0.8);  // A->B
+		PLNTruthValue bc(0.8, 0.7);  // B->C
+
+		PLNTruthValue ac = PLNTruthValue::deduction(ab, bc);
+
+		// Strength: 0.9 * 0.8 = 0.72
+		TS_ASSERT_DELTA(ac.strength, 0.72, 1e-10);
+		// Confidence decreases
+		TS_ASSERT(ac.confidence < ab.confidence);
+	}
+
+	void test_pln_induction()
+	{
+		PLNTruthValue ab(0.9, 0.8);
+		PLNTruthValue ac(0.7, 0.6);
+
+		PLNTruthValue bc = PLNTruthValue::induction(ab, ac);
+
+		// Induction is less certain than deduction
+		TS_ASSERT(bc.confidence < ab.confidence * ac.confidence);
+	}
+
+	void test_pln_abduction()
+	{
+		PLNTruthValue ab(0.8, 0.7);
+		PLNTruthValue cb(0.9, 0.6);
+
+		PLNTruthValue ac = PLNTruthValue::abduction(ab, cb);
+
+		// Abduction is least certain
+		TS_ASSERT(ac.confidence < 0.3);
+	}
+
+	void test_pln_truth_value_to_string()
+	{
+		PLNTruthValue tv(0.75, 0.85);
+		std::string str = tv.to_string();
+		TS_ASSERT(str.find("0.750") != std::string::npos);
+	}
+
+	// ============================================================
+	// PLN Tensor Tests
+	// ============================================================
+
+	void test_pln_tensor_create()
+	{
+		PLNTensor pt({2, 2});
+		TS_ASSERT_EQUALS(pt.shape().size(), (size_t)2);
+	}
+
+	void test_pln_tensor_get_set()
+	{
+		PLNTensor pt({2, 2});
+		pt.set({0, 1}, PLNTruthValue(0.8, 0.9));
+
+		PLNTruthValue tv = pt.get({0, 1});
+		TS_ASSERT_DELTA(tv.strength, 0.8, 1e-10);
+		TS_ASSERT_DELTA(tv.confidence, 0.9, 1e-10);
+	}
+
+	void test_pln_tensor_from_tensor()
+	{
+		ATenValuePtr tensor = createATenFromVector({0.5, 0.7, 0.3, 0.9}, {2, 2});
+		PLNTensorPtr pt = PLNTensor::from_tensor(tensor, 0.8);
+
+		TS_ASSERT(pt != nullptr);
+		PLNTruthValue tv = pt->get({0, 0});
+		TS_ASSERT_DELTA(tv.strength, 0.5, 1e-10);
+		TS_ASSERT_DELTA(tv.confidence, 0.8, 1e-10);
+	}
+
+	void test_pln_tensor_revise()
+	{
+		ATenValuePtr s1 = createATenFromVector({0.8, 0.6}, {2});
+		ATenValuePtr c1 = createATenFromVector({0.5, 0.5}, {2});
+		ATenValuePtr s2 = createATenFromVector({0.6, 0.8}, {2});
+		ATenValuePtr c2 = createATenFromVector({0.5, 0.5}, {2});
+
+		PLNTensor pt1(s1, c1);
+		PLNTensor pt2(s2, c2);
+
+		PLNTensorPtr revised = pt1.revise(pt2);
+		TS_ASSERT(revised != nullptr);
+
+		// Check revision result
+		PLNTruthValue tv = revised->get({0});
+		TS_ASSERT_DELTA(tv.strength, 0.7, 1e-10);
+	}
+
+	void test_pln_tensor_deduction()
+	{
+		// 2x2 matrices
+		ATenValuePtr s1 = createATenFromVector({0.9, 0.0, 0.0, 0.9}, {2, 2});
+		ATenValuePtr c1 = createATenFromVector({0.8, 0.0, 0.0, 0.8}, {2, 2});
+		ATenValuePtr s2 = createATenFromVector({0.8, 0.0, 0.0, 0.8}, {2, 2});
+		ATenValuePtr c2 = createATenFromVector({0.7, 0.0, 0.0, 0.7}, {2, 2});
+
+		PLNTensor pt1(s1, c1);
+		PLNTensor pt2(s2, c2);
+
+		PLNTensorPtr result = pt1.deduction(pt2);
+		TS_ASSERT(result != nullptr);
+	}
+
+	// ============================================================
+	// Resource Metrics Tests
+	// ============================================================
+
+	void test_resource_metrics_create()
+	{
+		ResourceMetrics rm;
+		TS_ASSERT_EQUALS(rm.memory_bytes, (size_t)0);
+		TS_ASSERT_EQUALS(rm.flops, (size_t)0);
+	}
+
+	void test_resource_metrics_add()
+	{
+		ResourceMetrics rm1;
+		rm1.memory_bytes = 100;
+		rm1.flops = 200;
+
+		ResourceMetrics rm2;
+		rm2.memory_bytes = 50;
+		rm2.flops = 100;
+
+		rm1.add(rm2);
+		TS_ASSERT_EQUALS(rm1.memory_bytes, (size_t)150);
+		TS_ASSERT_EQUALS(rm1.flops, (size_t)300);
+	}
+
+	void test_resource_metrics_estimate_matmul()
+	{
+		ResourceMetrics rm = ResourceMetrics::estimate_matmul(10, 10, 10);
+
+		// Memory: 3 * 10 * 10 * sizeof(double)
+		TS_ASSERT(rm.memory_bytes > 0);
+		// FLOPs: 2 * 10 * 10 * 10
+		TS_ASSERT_EQUALS(rm.flops, (size_t)2000);
+	}
+
+	void test_resource_metrics_to_string()
+	{
+		ResourceMetrics rm;
+		rm.memory_bytes = 1024;
+		rm.flops = 1000;
+
+		std::string str = rm.to_string();
+		TS_ASSERT(str.find("ResourceMetrics") != std::string::npos);
+	}
+
+	// ============================================================
+	// Resource Tracker Tests
+	// ============================================================
+
+	void test_resource_tracker_create()
+	{
+		ResourceTracker rt;
+		TS_ASSERT(!rt.is_tracking());
+	}
+
+	void test_resource_tracker_start_stop()
+	{
+		ResourceTracker rt;
+		rt.start_tracking();
+		TS_ASSERT(rt.is_tracking());
+		rt.stop_tracking();
+		TS_ASSERT(!rt.is_tracking());
+	}
+
+	void test_resource_tracker_record()
+	{
+		ResourceTracker rt;
+		rt.start_tracking();
+
+		ResourceMetrics rm;
+		rm.memory_bytes = 100;
+		rm.flops = 200;
+		rt.record_operation(rm);
+
+		TS_ASSERT_EQUALS(rt.total().memory_bytes, (size_t)100);
+		TS_ASSERT_EQUALS(rt.history().size(), (size_t)1);
+	}
+
+	void test_resource_tracker_limits()
+	{
+		ResourceTracker rt;
+		rt.set_memory_limit(500);
+		rt.set_flops_limit(1000);
+		rt.start_tracking();
+
+		ResourceMetrics rm;
+		rm.memory_bytes = 100;
+		rm.flops = 200;
+		rt.record_operation(rm);
+
+		TS_ASSERT(rt.within_limits());
+
+		// Exceed limits
+		rm.memory_bytes = 500;
+		rt.record_operation(rm);
+		TS_ASSERT(!rt.within_limits());
+	}
+
+	// ============================================================
+	// Linear Modality Tests
+	// ============================================================
+
+	void test_managed_tensor_bang()
+	{
+		ATenValuePtr tensor = createATenFromVector({1.0, 2.0}, {2});
+		ManagedTensor mt(tensor, LinearModality::BANG);
+
+		// BANG allows multiple reads
+		ATenValuePtr t1 = mt.acquire(false);
+		ATenValuePtr t2 = mt.acquire(false);
+		TS_ASSERT(t1 != nullptr);
+		TS_ASSERT(t2 != nullptr);
+
+		// But not consumption
+		ATenValuePtr t3 = mt.acquire(true);
+		TS_ASSERT(t3 == nullptr);
+	}
+
+	void test_managed_tensor_linear()
+	{
+		ATenValuePtr tensor = createATenFromVector({1.0, 2.0}, {2});
+		ManagedTensor mt(tensor, LinearModality::LINEAR);
+
+		// LINEAR requires consumption
+		ATenValuePtr t1 = mt.acquire(false);
+		TS_ASSERT(t1 == nullptr);
+
+		ATenValuePtr t2 = mt.acquire(true);
+		TS_ASSERT(t2 != nullptr);
+
+		// After consumption, not available
+		ATenValuePtr t3 = mt.acquire(true);
+		TS_ASSERT(t3 == nullptr);
+	}
+
+	void test_managed_tensor_affine()
+	{
+		ATenValuePtr tensor = createATenFromVector({1.0, 2.0}, {2});
+		ManagedTensor mt(tensor, LinearModality::AFFINE);
+
+		// AFFINE allows at most one use
+		ATenValuePtr t1 = mt.acquire(false);
+		TS_ASSERT(t1 != nullptr);
+		mt.release();
+
+		// Can consume after release
+		ATenValuePtr t2 = mt.acquire(true);
+		TS_ASSERT(t2 != nullptr);
+
+		// Now unavailable
+		TS_ASSERT(!mt.available());
+	}
+
+	void test_managed_tensor_to_string()
+	{
+		ATenValuePtr tensor = createATenFromVector({1.0}, {1});
+		ManagedTensor mt(tensor, LinearModality::BANG);
+
+		std::string str = mt.to_string();
+		TS_ASSERT(str.find("BANG") != std::string::npos);
+	}
+
+	// ============================================================
+	// RAPTL Value Tests
+	// ============================================================
+
+	void test_raptl_value_create()
+	{
+		ATenValuePtr tensor = createATenFromVector({1.0, 2.0, 3.0}, {3});
+		RAPTLValue rv(tensor, SemiringType::REAL);
+
+		TS_ASSERT(rv.tensor() != nullptr);
+		TS_ASSERT(rv.uncertainty() != nullptr);
+		TS_ASSERT(rv.semiring() != nullptr);
+	}
+
+	void test_raptl_value_multiply()
+	{
+		ATenValuePtr t1 = createATenFromVector({2.0, 3.0}, {2});
+		ATenValuePtr t2 = createATenFromVector({4.0, 5.0}, {2});
+
+		RAPTLValue rv1(t1, SemiringType::REAL);
+		RAPTLValue rv2(t2, SemiringType::REAL);
+
+		RAPTLValuePtr result = rv1.multiply(rv2);
+		TS_ASSERT(result != nullptr);
+
+		auto vec = result->tensor()->to_vector();
+		TS_ASSERT_DELTA(vec[0], 8.0, 1e-10);
+		TS_ASSERT_DELTA(vec[1], 15.0, 1e-10);
+	}
+
+	void test_raptl_value_add()
+	{
+		ATenValuePtr t1 = createATenFromVector({1.0, 2.0}, {2});
+		ATenValuePtr t2 = createATenFromVector({3.0, 4.0}, {2});
+
+		RAPTLValue rv1(t1, SemiringType::REAL);
+		RAPTLValue rv2(t2, SemiringType::REAL);
+
+		RAPTLValuePtr result = rv1.add(rv2);
+		TS_ASSERT(result != nullptr);
+
+		auto vec = result->tensor()->to_vector();
+		TS_ASSERT_DELTA(vec[0], 4.0, 1e-10);
+		TS_ASSERT_DELTA(vec[1], 6.0, 1e-10);
+	}
+
+	void test_raptl_value_einsum()
+	{
+		ATenValuePtr t1 = createATenFromVector({1.0, 2.0, 3.0, 4.0}, {2, 2});
+		ATenValuePtr t2 = createATenFromVector({5.0, 6.0, 7.0, 8.0}, {2, 2});
+
+		auto rv1 = std::make_shared<RAPTLValue>(t1, SemiringType::REAL);
+		auto rv2 = std::make_shared<RAPTLValue>(t2, SemiringType::REAL);
+
+		RAPTLValuePtr result = RAPTLValue::einsum("ij,jk->ik", {rv1, rv2});
+		TS_ASSERT(result != nullptr);
+
+		// Check resources were tracked
+		TS_ASSERT(result->resources().flops > 0);
+	}
+
+	void test_raptl_value_resource_limits()
+	{
+		ATenValuePtr tensor = createATenFromVector({1.0, 2.0}, {2});
+		RAPTLValue rv(tensor, SemiringType::REAL);
+
+		TS_ASSERT(rv.within_limits(1000, 1000));
+		TS_ASSERT(!rv.within_limits(1, 1000));  // Too little memory
+	}
+
+	void test_raptl_value_to_string()
+	{
+		ATenValuePtr tensor = createATenFromVector({1.0}, {1});
+		RAPTLValue rv(tensor, SemiringType::BOOLEAN);
+
+		std::string str = rv.to_string();
+		TS_ASSERT(str.find("RAPTLValue") != std::string::npos);
+		TS_ASSERT(str.find("Boolean") != std::string::npos);
+	}
+
+	// ============================================================
+	// RAPTL Program Tests
+	// ============================================================
+
+	void test_raptl_program_create()
+	{
+		RAPTLProgram prog("test", SemiringType::REAL);
+		TS_ASSERT(prog.semiring() != nullptr);
+		TS_ASSERT(prog.tracker() != nullptr);
+	}
+
+	void test_raptl_program_add_fact()
+	{
+		RAPTLProgram prog("test");
+
+		ATenValuePtr tensor = createATenFromVector({1.0, 2.0}, {2});
+		auto rv = std::make_shared<RAPTLValue>(tensor);
+		prog.add_fact("data", rv);
+
+		RAPTLValuePtr retrieved = prog.get_fact("data");
+		TS_ASSERT(retrieved != nullptr);
+	}
+
+	void test_raptl_program_forward()
+	{
+		RAPTLProgram prog("family", SemiringType::BOOLEAN);
+
+		// Parent relation
+		ATenValuePtr parent = createATenFromVector({
+			0.0, 1.0, 0.0,
+			0.0, 0.0, 1.0,
+			0.0, 0.0, 0.0
+		}, {3, 3});
+
+		prog.add_fact("parent", std::make_shared<RAPTLValue>(parent, SemiringType::BOOLEAN));
+		prog.add_equation("gp", "grandparent", {"parent", "parent"},
+		                  "ij,jk->ik", Nonlinearity::THRESHOLD);
+
+		prog.forward();
+
+		RAPTLValuePtr gp = prog.query("grandparent");
+		TS_ASSERT(gp != nullptr);
+
+		// grandparent[0,2] should be 1 (through person 1)
+		auto vec = gp->tensor()->to_vector();
+		TS_ASSERT_DELTA(vec[2], 1.0, 1e-10);
+	}
+
+	void test_raptl_program_semiring_change()
+	{
+		RAPTLProgram prog("test", SemiringType::REAL);
+		prog.set_semiring(SemiringType::VITERBI);
+
+		TS_ASSERT(prog.semiring()->type() == SemiringType::VITERBI);
+	}
+
+	void test_raptl_program_resource_limits()
+	{
+		RAPTLProgram prog("test");
+		prog.set_resource_limits(1000000, 10000000);
+
+		ATenValuePtr tensor = createATenFromVector({1.0, 2.0}, {2});
+		prog.add_fact("data", std::make_shared<RAPTLValue>(tensor));
+
+		TS_ASSERT(prog.within_limits());
+	}
+
+	void test_raptl_program_to_string()
+	{
+		RAPTLProgram prog("myprogram", SemiringType::TROPICAL);
+
+		std::string str = prog.to_string();
+		TS_ASSERT(str.find("RAPTLProgram") != std::string::npos);
+		TS_ASSERT(str.find("myprogram") != std::string::npos);
+	}
+
+	// ============================================================
+	// Integration Tests with RAPTL
+	// ============================================================
+
+	void test_raptl_path_counting()
+	{
+		// Use COUNTING semiring to count paths
+		RAPTLProgram prog("paths", SemiringType::COUNTING);
+
+		// Graph adjacency matrix
+		ATenValuePtr adj = createATenFromVector({
+			0.0, 1.0, 1.0,
+			0.0, 0.0, 1.0,
+			0.0, 0.0, 0.0
+		}, {3, 3});
+
+		prog.add_fact("edge", std::make_shared<RAPTLValue>(adj, SemiringType::COUNTING));
+		prog.add_equation("paths2", "path2", {"edge", "edge"}, "ij,jk->ik");
+
+		prog.forward();
+
+		RAPTLValuePtr path2 = prog.query("path2");
+		TS_ASSERT(path2 != nullptr);
+
+		// path2[0,2] = 2 (two 2-hop paths: 0->1->2 and 0->2->nothing, so actually 1)
+		// Actually: edge[0,1]*edge[1,2] + edge[0,2]*edge[2,*] = 1*1 + 1*0 = 1
+	}
+
+	void test_raptl_shortest_path()
+	{
+		// Use TROPICAL semiring for shortest paths
+		RAPTLProgram prog("shortest", SemiringType::TROPICAL);
+
+		// Distance matrix (infinity represented as large number)
+		double inf = 1e9;
+		ATenValuePtr dist = createATenFromVector({
+			0.0, 1.0, inf,
+			inf, 0.0, 2.0,
+			inf, inf, 0.0
+		}, {3, 3});
+
+		prog.add_fact("dist", std::make_shared<RAPTLValue>(dist, SemiringType::TROPICAL));
+		prog.add_equation("d2", "dist2", {"dist", "dist"}, "ij,jk->ik");
+
+		prog.forward();
+
+		RAPTLValuePtr dist2 = prog.query("dist2");
+		TS_ASSERT(dist2 != nullptr);
+	}
+
+	void test_raptl_fuzzy_reasoning()
+	{
+		// Use LUKASIEWICZ for fuzzy logic
+		RAPTLProgram prog("fuzzy", SemiringType::LUKASIEWICZ);
+
+		ATenValuePtr rel = createATenFromVector({
+			0.0, 0.8, 0.3,
+			0.0, 0.0, 0.6,
+			0.0, 0.0, 0.0
+		}, {3, 3});
+
+		prog.add_fact("fuzzy_rel", std::make_shared<RAPTLValue>(rel, SemiringType::LUKASIEWICZ));
+		prog.add_equation("trans", "transitive", {"fuzzy_rel", "fuzzy_rel"}, "ij,jk->ik");
+
+		prog.forward();
+
+		RAPTLValuePtr trans = prog.query("transitive");
+		TS_ASSERT(trans != nullptr);
+
+		// Lukasiewicz uses min for AND, so path strength = min of edge strengths
+	}
+
+	void test_raptl_pln_uncertainty()
+	{
+		// Test that PLN uncertainty is tracked
+		ATenValuePtr tensor = createATenFromVector({0.8, 0.6}, {2});
+		RAPTLValue rv(tensor, SemiringType::PROBABILISTIC);
+
+		TS_ASSERT(rv.uncertainty() != nullptr);
+
+		PLNTruthValue tv = rv.uncertainty()->get({0});
+		TS_ASSERT_DELTA(tv.strength, 0.8, 1e-10);
+		TS_ASSERT(tv.confidence > 0.0);
+	}
+
+	void test_raptl_full_pipeline()
+	{
+		// Full RAPTL pipeline: logic + uncertainty + resources
+		RAPTLProgram prog("full", SemiringType::REAL);
+		prog.set_resource_limits(10000000, 100000000);
+
+		// Create facts with RAPTL values
+		ATenValuePtr parent = createATenFromVector({
+			0.0, 0.95, 0.0,
+			0.0, 0.0, 0.85,
+			0.0, 0.0, 0.0
+		}, {3, 3});
+
+		auto parent_rv = std::make_shared<RAPTLValue>(parent, SemiringType::REAL);
+		prog.add_fact("parent", parent_rv);
+
+		prog.add_equation("gp", "grandparent", {"parent", "parent"},
+		                  "ij,jk->ik", Nonlinearity::NONE);
+
+		prog.forward();
+
+		// Check result
+		RAPTLValuePtr gp = prog.query("grandparent");
+		TS_ASSERT(gp != nullptr);
+
+		// Check resources were tracked
+		TS_ASSERT(prog.tracker()->total().flops > 0);
+		TS_ASSERT(prog.within_limits());
+
+		// Check uncertainty exists
+		TS_ASSERT(gp->uncertainty() != nullptr);
+	}
 };

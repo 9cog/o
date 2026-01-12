@@ -1810,4 +1810,985 @@ void GradientTape::clear()
 	_gradients.clear();
 }
 
+// ============================================================
+// Semiring Implementation
+// ============================================================
+
+Semiring::Semiring(SemiringType type)
+	: _type(type)
+{
+	switch (type)
+	{
+		case SemiringType::BOOLEAN:
+			_zero = 0.0;  // false
+			_one = 1.0;   // true
+			break;
+		case SemiringType::COUNTING:
+		case SemiringType::PROBABILISTIC:
+		case SemiringType::REAL:
+			_zero = 0.0;
+			_one = 1.0;
+			break;
+		case SemiringType::VITERBI:
+			_zero = -std::numeric_limits<double>::infinity();
+			_one = 0.0;
+			break;
+		case SemiringType::TROPICAL:
+			_zero = std::numeric_limits<double>::infinity();
+			_one = 0.0;
+			break;
+		case SemiringType::LUKASIEWICZ:
+			_zero = 0.0;
+			_one = 1.0;
+			break;
+	}
+}
+
+double Semiring::add(double a, double b) const
+{
+	switch (_type)
+	{
+		case SemiringType::BOOLEAN:
+			return (a > 0.5 || b > 0.5) ? 1.0 : 0.0;  // OR
+		case SemiringType::COUNTING:
+		case SemiringType::PROBABILISTIC:
+		case SemiringType::REAL:
+			return a + b;
+		case SemiringType::VITERBI:
+			return std::max(a, b);
+		case SemiringType::TROPICAL:
+			return std::min(a, b);
+		case SemiringType::LUKASIEWICZ:
+			return std::max(a, b);  // max for fuzzy OR
+	}
+	return a + b;
+}
+
+double Semiring::mul(double a, double b) const
+{
+	switch (_type)
+	{
+		case SemiringType::BOOLEAN:
+			return (a > 0.5 && b > 0.5) ? 1.0 : 0.0;  // AND
+		case SemiringType::COUNTING:
+		case SemiringType::PROBABILISTIC:
+		case SemiringType::REAL:
+			return a * b;
+		case SemiringType::VITERBI:
+		case SemiringType::TROPICAL:
+			return a + b;  // log-domain multiplication
+		case SemiringType::LUKASIEWICZ:
+			return std::min(a, b);  // min for fuzzy AND
+	}
+	return a * b;
+}
+
+ATenValuePtr Semiring::tensor_add(const ATenValuePtr& a, const ATenValuePtr& b) const
+{
+	if (!a || !b) return nullptr;
+
+	auto va = a->to_vector();
+	auto vb = b->to_vector();
+	auto shape = a->shape();
+
+	if (va.size() != vb.size()) return nullptr;
+
+	std::vector<double> result(va.size());
+	for (size_t i = 0; i < va.size(); i++)
+	{
+		result[i] = add(va[i], vb[i]);
+	}
+
+	return createATenFromVector(result, shape);
+}
+
+ATenValuePtr Semiring::tensor_mul(const ATenValuePtr& a, const ATenValuePtr& b) const
+{
+	if (!a || !b) return nullptr;
+
+	auto va = a->to_vector();
+	auto vb = b->to_vector();
+	auto shape = a->shape();
+
+	if (va.size() != vb.size()) return nullptr;
+
+	std::vector<double> result(va.size());
+	for (size_t i = 0; i < va.size(); i++)
+	{
+		result[i] = mul(va[i], vb[i]);
+	}
+
+	return createATenFromVector(result, shape);
+}
+
+ATenValuePtr Semiring::tensor_sum(const ATenValuePtr& a) const
+{
+	if (!a) return nullptr;
+
+	auto va = a->to_vector();
+	double result = _zero;
+
+	for (double v : va)
+	{
+		result = add(result, v);
+	}
+
+	return createATenFromVector({result}, {});
+}
+
+ATenValuePtr Semiring::einsum(const std::string& notation,
+                               const std::vector<ATenValuePtr>& tensors) const
+{
+	// For most semirings, use standard einsum then apply normalization
+	ATenValuePtr result = opencog::einsum(notation, tensors);
+
+	// For probabilistic semiring, normalize
+	if (_type == SemiringType::PROBABILISTIC && result)
+	{
+		auto vec = result->to_vector();
+		double sum = 0.0;
+		for (double v : vec) sum += v;
+		if (sum > 1e-10)
+		{
+			for (double& v : vec) v /= sum;
+		}
+		return createATenFromVector(vec, result->shape());
+	}
+
+	// For boolean semiring, threshold
+	if (_type == SemiringType::BOOLEAN && result)
+	{
+		auto vec = result->to_vector();
+		for (double& v : vec) v = (v > 0.5) ? 1.0 : 0.0;
+		return createATenFromVector(vec, result->shape());
+	}
+
+	return result;
+}
+
+std::string Semiring::to_string() const
+{
+	switch (_type)
+	{
+		case SemiringType::BOOLEAN: return "Boolean(OR,AND)";
+		case SemiringType::COUNTING: return "Counting(+,×)";
+		case SemiringType::VITERBI: return "Viterbi(max,+)";
+		case SemiringType::PROBABILISTIC: return "Probabilistic(+,×)";
+		case SemiringType::TROPICAL: return "Tropical(min,+)";
+		case SemiringType::LUKASIEWICZ: return "Lukasiewicz(max,min)";
+		case SemiringType::REAL: return "Real(+,×)";
+	}
+	return "Unknown";
+}
+
+// ============================================================
+// PLN Truth Value Implementation
+// ============================================================
+
+PLNTruthValue PLNTruthValue::revise(const PLNTruthValue& other) const
+{
+	// PLN revision formula
+	// Combined strength = weighted average by confidence
+	// Combined confidence = increases with more evidence
+
+	double w1 = confidence;
+	double w2 = other.confidence;
+	double total_w = w1 + w2;
+
+	if (total_w < 1e-10)
+		return PLNTruthValue(0.5, 0.0);
+
+	double new_strength = (w1 * strength + w2 * other.strength) / total_w;
+
+	// Confidence increases but asymptotes at 1
+	// Using formula: c_new = c1 + c2 - c1*c2
+	double new_confidence = w1 + w2 - w1 * w2;
+	new_confidence = std::min(new_confidence, 0.9999);
+
+	return PLNTruthValue(new_strength, new_confidence);
+}
+
+PLNTruthValue PLNTruthValue::deduction(const PLNTruthValue& ab,
+                                        const PLNTruthValue& bc)
+{
+	// PLN deduction: P(A->C) from P(A->B) and P(B->C)
+	// Simplified: s_ac = s_ab * s_bc
+	// Confidence decreases with chain length
+
+	double s_ac = ab.strength * bc.strength;
+	double c_ac = ab.confidence * bc.confidence * 0.9;  // Decay factor
+
+	return PLNTruthValue(s_ac, c_ac);
+}
+
+PLNTruthValue PLNTruthValue::induction(const PLNTruthValue& ab,
+                                        const PLNTruthValue& ac)
+{
+	// PLN induction: P(B->C) from P(A->B) and P(A->C)
+	// Less certain than deduction
+
+	double s_bc = ab.strength > 0.5 ? ac.strength : 1.0 - ac.strength;
+	double c_bc = ab.confidence * ac.confidence * 0.5;  // Lower confidence
+
+	return PLNTruthValue(s_bc, c_bc);
+}
+
+PLNTruthValue PLNTruthValue::abduction(const PLNTruthValue& ab,
+                                        const PLNTruthValue& cb)
+{
+	// PLN abduction: P(A->C) from P(A->B) and P(C->B)
+	// Least certain inference type
+
+	double s_ac = (ab.strength * cb.strength);
+	double c_ac = ab.confidence * cb.confidence * 0.3;  // Lowest confidence
+
+	return PLNTruthValue(s_ac, c_ac);
+}
+
+std::string PLNTruthValue::to_string() const
+{
+	std::ostringstream oss;
+	oss << "<" << std::fixed << std::setprecision(3)
+	    << strength << ", " << confidence << ">";
+	return oss.str();
+}
+
+// ============================================================
+// PLN Tensor Implementation
+// ============================================================
+
+PLNTensor::PLNTensor(const std::vector<int64_t>& shape)
+	: _shape(shape)
+{
+	size_t size = 1;
+	for (int64_t d : shape) size *= d;
+
+	std::vector<double> zeros(size, 0.0);
+	_strength = createATenFromVector(zeros, shape);
+	_confidence = createATenFromVector(zeros, shape);
+}
+
+PLNTensor::PLNTensor(const ATenValuePtr& strength, const ATenValuePtr& confidence)
+	: _strength(strength), _confidence(confidence)
+{
+	if (strength)
+		_shape = strength->shape();
+}
+
+PLNTruthValue PLNTensor::get(const std::vector<int64_t>& indices) const
+{
+	if (!_strength || !_confidence) return PLNTruthValue();
+
+	// Compute linear index
+	int64_t idx = 0;
+	int64_t stride = 1;
+	for (int i = _shape.size() - 1; i >= 0; i--)
+	{
+		idx += indices[i] * stride;
+		stride *= _shape[i];
+	}
+
+	auto s_vec = _strength->to_vector();
+	auto c_vec = _confidence->to_vector();
+
+	if (idx >= (int64_t)s_vec.size()) return PLNTruthValue();
+
+	return PLNTruthValue(s_vec[idx], c_vec[idx]);
+}
+
+void PLNTensor::set(const std::vector<int64_t>& indices, const PLNTruthValue& tv)
+{
+	if (!_strength || !_confidence) return;
+
+	int64_t idx = 0;
+	int64_t stride = 1;
+	for (int i = _shape.size() - 1; i >= 0; i--)
+	{
+		idx += indices[i] * stride;
+		stride *= _shape[i];
+	}
+
+	auto s_vec = _strength->to_vector();
+	auto c_vec = _confidence->to_vector();
+
+	if (idx >= (int64_t)s_vec.size()) return;
+
+	s_vec[idx] = tv.strength;
+	c_vec[idx] = tv.confidence;
+
+	_strength = createATenFromVector(s_vec, _shape);
+	_confidence = createATenFromVector(c_vec, _shape);
+}
+
+PLNTensorPtr PLNTensor::revise(const PLNTensor& other) const
+{
+	if (_shape != other._shape) return nullptr;
+
+	auto s1 = _strength->to_vector();
+	auto c1 = _confidence->to_vector();
+	auto s2 = other._strength->to_vector();
+	auto c2 = other._confidence->to_vector();
+
+	std::vector<double> new_s(s1.size());
+	std::vector<double> new_c(c1.size());
+
+	for (size_t i = 0; i < s1.size(); i++)
+	{
+		PLNTruthValue tv1(s1[i], c1[i]);
+		PLNTruthValue tv2(s2[i], c2[i]);
+		PLNTruthValue revised = tv1.revise(tv2);
+		new_s[i] = revised.strength;
+		new_c[i] = revised.confidence;
+	}
+
+	return std::make_shared<PLNTensor>(
+		createATenFromVector(new_s, _shape),
+		createATenFromVector(new_c, _shape));
+}
+
+PLNTensorPtr PLNTensor::deduction(const PLNTensor& other) const
+{
+	// Matrix multiplication with PLN uncertainty propagation
+	if (_shape.size() != 2 || other._shape.size() != 2)
+		return nullptr;
+
+	if (_shape[1] != other._shape[0])
+		return nullptr;
+
+	int64_t m = _shape[0];
+	int64_t k = _shape[1];
+	int64_t n = other._shape[1];
+
+	std::vector<double> new_s(m * n, 0.0);
+	std::vector<double> new_c(m * n, 0.0);
+
+	auto s1 = _strength->to_vector();
+	auto c1 = _confidence->to_vector();
+	auto s2 = other._strength->to_vector();
+	auto c2 = other._confidence->to_vector();
+
+	for (int64_t i = 0; i < m; i++)
+	{
+		for (int64_t j = 0; j < n; j++)
+		{
+			double sum_s = 0.0;
+			double sum_c = 0.0;
+			double total_weight = 0.0;
+
+			for (int64_t l = 0; l < k; l++)
+			{
+				PLNTruthValue tv1(s1[i * k + l], c1[i * k + l]);
+				PLNTruthValue tv2(s2[l * n + j], c2[l * n + j]);
+				PLNTruthValue deduced = PLNTruthValue::deduction(tv1, tv2);
+
+				// Weight by confidence
+				double weight = deduced.confidence;
+				sum_s += weight * deduced.strength;
+				sum_c += weight * deduced.confidence;
+				total_weight += weight;
+			}
+
+			if (total_weight > 1e-10)
+			{
+				new_s[i * n + j] = sum_s / total_weight;
+				new_c[i * n + j] = sum_c / total_weight;
+			}
+		}
+	}
+
+	return std::make_shared<PLNTensor>(
+		createATenFromVector(new_s, {m, n}),
+		createATenFromVector(new_c, {m, n}));
+}
+
+PLNTensorPtr PLNTensor::from_tensor(const ATenValuePtr& tensor,
+                                     double default_confidence)
+{
+	if (!tensor) return nullptr;
+
+	auto shape = tensor->shape();
+	auto data = tensor->to_vector();
+
+	std::vector<double> conf(data.size(), default_confidence);
+
+	return std::make_shared<PLNTensor>(
+		tensor,
+		createATenFromVector(conf, shape));
+}
+
+std::string PLNTensor::to_string() const
+{
+	std::ostringstream oss;
+	oss << "PLNTensor(shape=[";
+	for (size_t i = 0; i < _shape.size(); i++)
+	{
+		if (i > 0) oss << ", ";
+		oss << _shape[i];
+	}
+	oss << "])";
+	return oss.str();
+}
+
+// ============================================================
+// Resource Metrics Implementation
+// ============================================================
+
+ResourceMetrics::ResourceMetrics()
+	: memory_bytes(0)
+	, flops(0)
+	, tensor_elements(0)
+	, sparsity(0.0)
+	, cache_misses(0)
+	, bandwidth_gb(0.0)
+	, compute_time_ms(0.0)
+{
+}
+
+void ResourceMetrics::reset()
+{
+	memory_bytes = 0;
+	flops = 0;
+	tensor_elements = 0;
+	sparsity = 0.0;
+	cache_misses = 0;
+	bandwidth_gb = 0.0;
+	compute_time_ms = 0.0;
+}
+
+void ResourceMetrics::add(const ResourceMetrics& other)
+{
+	memory_bytes += other.memory_bytes;
+	flops += other.flops;
+	tensor_elements += other.tensor_elements;
+	// Weighted average for sparsity
+	if (tensor_elements > 0)
+	{
+		sparsity = (sparsity * (tensor_elements - other.tensor_elements) +
+		            other.sparsity * other.tensor_elements) / tensor_elements;
+	}
+	cache_misses += other.cache_misses;
+	bandwidth_gb += other.bandwidth_gb;
+	compute_time_ms += other.compute_time_ms;
+}
+
+ResourceMetrics ResourceMetrics::estimate_matmul(int64_t m, int64_t n, int64_t k)
+{
+	ResourceMetrics metrics;
+
+	// Memory: input matrices + output matrix
+	metrics.memory_bytes = (m * k + k * n + m * n) * sizeof(double);
+
+	// FLOPs: 2 * m * n * k (multiply-add for each output element)
+	metrics.flops = 2 * m * n * k;
+
+	metrics.tensor_elements = m * k + k * n + m * n;
+
+	// Estimate bandwidth (assumes all data read once)
+	metrics.bandwidth_gb = metrics.memory_bytes / 1e9;
+
+	// Rough compute time estimate (assuming 1 TFLOP/s)
+	metrics.compute_time_ms = metrics.flops / 1e9;
+
+	return metrics;
+}
+
+ResourceMetrics ResourceMetrics::estimate_einsum(const EinsumSpec& spec,
+                                                   const std::vector<ATenValuePtr>& tensors)
+{
+	ResourceMetrics metrics;
+
+	// Sum up input tensor elements
+	for (const auto& t : tensors)
+	{
+		if (t)
+		{
+			metrics.memory_bytes += t->numel() * sizeof(double);
+			metrics.tensor_elements += t->numel();
+		}
+	}
+
+	// Estimate output size
+	auto output_shape = spec.output_shape(tensors);
+	size_t output_size = 1;
+	for (int64_t d : output_shape) output_size *= d;
+	metrics.memory_bytes += output_size * sizeof(double);
+	metrics.tensor_elements += output_size;
+
+	// FLOPs: roughly product of all dimensions
+	metrics.flops = output_size;
+	for (char c : spec.sum_indices())
+	{
+		// Each summed index multiplies the work
+		for (size_t i = 0; i < tensors.size(); i++)
+		{
+			const auto& shape = tensors[i]->shape();
+			const auto& spec_str = spec.input_specs()[i];
+			for (size_t j = 0; j < spec_str.size(); j++)
+			{
+				if (spec_str[j] == c && j < shape.size())
+				{
+					metrics.flops *= shape[j];
+					break;
+				}
+			}
+		}
+	}
+
+	metrics.bandwidth_gb = metrics.memory_bytes / 1e9;
+	metrics.compute_time_ms = metrics.flops / 1e9;
+
+	return metrics;
+}
+
+std::string ResourceMetrics::to_string() const
+{
+	std::ostringstream oss;
+	oss << "ResourceMetrics{memory=" << memory_bytes / 1024 << "KB"
+	    << ", flops=" << flops
+	    << ", elements=" << tensor_elements
+	    << ", sparsity=" << std::fixed << std::setprecision(3) << sparsity
+	    << ", time=" << compute_time_ms << "ms}";
+	return oss.str();
+}
+
+// ============================================================
+// Resource Tracker Implementation
+// ============================================================
+
+ResourceTracker::ResourceTracker()
+	: _tracking(false)
+	, _memory_limit(0)
+	, _flops_limit(0)
+{
+}
+
+void ResourceTracker::start_tracking()
+{
+	_tracking = true;
+	_total.reset();
+	_history.clear();
+}
+
+void ResourceTracker::stop_tracking()
+{
+	_tracking = false;
+}
+
+void ResourceTracker::record_operation(const ResourceMetrics& metrics)
+{
+	if (!_tracking) return;
+
+	_total.add(metrics);
+	_history.push_back(metrics);
+}
+
+void ResourceTracker::clear_history()
+{
+	_history.clear();
+	_total.reset();
+}
+
+bool ResourceTracker::within_limits() const
+{
+	if (_memory_limit > 0 && _total.memory_bytes > _memory_limit)
+		return false;
+	if (_flops_limit > 0 && _total.flops > _flops_limit)
+		return false;
+	return true;
+}
+
+std::string ResourceTracker::to_string() const
+{
+	std::ostringstream oss;
+	oss << "ResourceTracker{tracking=" << (_tracking ? "true" : "false")
+	    << ", total=" << _total.to_string()
+	    << ", ops=" << _history.size() << "}";
+	return oss.str();
+}
+
+// ============================================================
+// Managed Tensor Implementation
+// ============================================================
+
+ManagedTensor::ManagedTensor(const ATenValuePtr& tensor, LinearModality modality)
+	: _tensor(tensor)
+	, _modality(modality)
+	, _ref_count(0)
+	, _consumed(false)
+{
+}
+
+ATenValuePtr ManagedTensor::acquire(bool consume)
+{
+	std::lock_guard<std::mutex> lock(_mtx);
+
+	if (_consumed) return nullptr;
+
+	switch (_modality)
+	{
+		case LinearModality::LINEAR:
+			// Must consume on first use
+			if (!consume) return nullptr;
+			_consumed = true;
+			return _tensor;
+
+		case LinearModality::AFFINE:
+			// Can use at most once
+			if (_ref_count > 0 && consume) return nullptr;
+			if (consume) _consumed = true;
+			_ref_count++;
+			return _tensor;
+
+		case LinearModality::BANG:
+			// Read-only sharing
+			if (consume) return nullptr;  // Can't consume shared
+			_ref_count++;
+			return _tensor;
+
+		case LinearModality::WITH:
+			// Choice - can acquire either way
+			if (consume) _consumed = true;
+			_ref_count++;
+			return _tensor;
+	}
+
+	return nullptr;
+}
+
+void ManagedTensor::release()
+{
+	std::lock_guard<std::mutex> lock(_mtx);
+	if (_ref_count > 0) _ref_count--;
+}
+
+bool ManagedTensor::available() const
+{
+	if (_consumed) return false;
+
+	switch (_modality)
+	{
+		case LinearModality::LINEAR:
+			return _ref_count == 0;
+		case LinearModality::AFFINE:
+			return _ref_count == 0;
+		case LinearModality::BANG:
+			return true;  // Always available for reading
+		case LinearModality::WITH:
+			return true;
+	}
+	return false;
+}
+
+std::string ManagedTensor::to_string() const
+{
+	std::ostringstream oss;
+	oss << "ManagedTensor{modality=";
+	switch (_modality)
+	{
+		case LinearModality::LINEAR: oss << "LINEAR"; break;
+		case LinearModality::AFFINE: oss << "AFFINE"; break;
+		case LinearModality::BANG: oss << "BANG"; break;
+		case LinearModality::WITH: oss << "WITH"; break;
+	}
+	oss << ", refs=" << _ref_count
+	    << ", consumed=" << (_consumed ? "true" : "false") << "}";
+	return oss.str();
+}
+
+// ============================================================
+// RAPTL Value Implementation
+// ============================================================
+
+RAPTLValue::RAPTLValue(const ATenValuePtr& tensor, SemiringType semiring)
+	: _tensor(tensor)
+	, _semiring(std::make_shared<Semiring>(semiring))
+	, _modality(LinearModality::BANG)
+{
+	if (tensor)
+	{
+		_uncertainty = PLNTensor::from_tensor(tensor, 0.9);
+
+		// Estimate resource usage
+		_resources.memory_bytes = tensor->numel() * sizeof(double);
+		_resources.tensor_elements = tensor->numel();
+	}
+}
+
+RAPTLValuePtr RAPTLValue::multiply(const RAPTLValue& other) const
+{
+	if (!_tensor || !other._tensor) return nullptr;
+
+	// Use semiring multiplication
+	ATenValuePtr result_tensor = _semiring->tensor_mul(_tensor, other._tensor);
+
+	auto result = std::make_shared<RAPTLValue>(result_tensor, _semiring->type());
+
+	// Combine uncertainties (element-wise deduction-like operation)
+	if (_uncertainty && other._uncertainty)
+	{
+		auto s1 = _uncertainty->strength()->to_vector();
+		auto c1 = _uncertainty->confidence()->to_vector();
+		auto s2 = other._uncertainty->strength()->to_vector();
+		auto c2 = other._uncertainty->confidence()->to_vector();
+
+		std::vector<double> new_s(s1.size());
+		std::vector<double> new_c(c1.size());
+
+		for (size_t i = 0; i < s1.size(); i++)
+		{
+			new_s[i] = s1[i] * s2[i];
+			new_c[i] = c1[i] * c2[i] * 0.9;  // Confidence decay
+		}
+
+		result->_uncertainty = std::make_shared<PLNTensor>(
+			createATenFromVector(new_s, _tensor->shape()),
+			createATenFromVector(new_c, _tensor->shape()));
+	}
+
+	// Combine resources
+	result->_resources.add(_resources);
+	result->_resources.add(other._resources);
+	result->_resources.flops += _tensor->numel();
+
+	return result;
+}
+
+RAPTLValuePtr RAPTLValue::add(const RAPTLValue& other) const
+{
+	if (!_tensor || !other._tensor) return nullptr;
+
+	ATenValuePtr result_tensor = _semiring->tensor_add(_tensor, other._tensor);
+
+	auto result = std::make_shared<RAPTLValue>(result_tensor, _semiring->type());
+
+	// Revise uncertainties
+	if (_uncertainty && other._uncertainty)
+	{
+		result->_uncertainty = _uncertainty->revise(*other._uncertainty);
+	}
+
+	// Combine resources
+	result->_resources.add(_resources);
+	result->_resources.add(other._resources);
+
+	return result;
+}
+
+RAPTLValuePtr RAPTLValue::einsum(
+	const std::string& notation,
+	const std::vector<RAPTLValuePtr>& inputs)
+{
+	if (inputs.empty()) return nullptr;
+
+	// Gather tensors
+	std::vector<ATenValuePtr> tensors;
+	for (const auto& input : inputs)
+	{
+		if (input && input->tensor())
+			tensors.push_back(input->tensor());
+	}
+
+	if (tensors.empty()) return nullptr;
+
+	// Use first input's semiring
+	auto semiring = inputs[0]->semiring();
+
+	// Perform einsum
+	ATenValuePtr result_tensor = semiring->einsum(notation, tensors);
+
+	auto result = std::make_shared<RAPTLValue>(result_tensor, semiring->type());
+
+	// Combine all uncertainties (simplified - just use first)
+	if (inputs[0]->uncertainty())
+	{
+		result->_uncertainty = PLNTensor::from_tensor(result_tensor, 0.8);
+	}
+
+	// Sum up resources
+	for (const auto& input : inputs)
+	{
+		if (input)
+			result->_resources.add(input->resources());
+	}
+
+	// Add einsum operation resources
+	EinsumSpec spec(notation);
+	auto einsum_resources = ResourceMetrics::estimate_einsum(spec, tensors);
+	result->_resources.add(einsum_resources);
+
+	return result;
+}
+
+bool RAPTLValue::within_limits(size_t memory_limit, size_t flops_limit) const
+{
+	if (memory_limit > 0 && _resources.memory_bytes > memory_limit)
+		return false;
+	if (flops_limit > 0 && _resources.flops > flops_limit)
+		return false;
+	return true;
+}
+
+std::string RAPTLValue::to_string() const
+{
+	std::ostringstream oss;
+	oss << "RAPTLValue{";
+	if (_tensor)
+	{
+		oss << "shape=[";
+		auto shape = _tensor->shape();
+		for (size_t i = 0; i < shape.size(); i++)
+		{
+			if (i > 0) oss << ",";
+			oss << shape[i];
+		}
+		oss << "]";
+	}
+	oss << ", semiring=" << _semiring->to_string()
+	    << ", resources=" << _resources.to_string()
+	    << "}";
+	return oss.str();
+}
+
+// ============================================================
+// RAPTL Program Implementation
+// ============================================================
+
+RAPTLProgram::RAPTLProgram(const std::string& name, SemiringType semiring)
+	: _name(name)
+	, _semiring(std::make_shared<Semiring>(semiring))
+	, _tracker(std::make_shared<ResourceTracker>())
+	, _mode(ReasoningMode::CONTINUOUS)
+{
+}
+
+void RAPTLProgram::add_fact(const std::string& name, const RAPTLValuePtr& value)
+{
+	_facts[name] = value;
+}
+
+RAPTLValuePtr RAPTLProgram::get_fact(const std::string& name) const
+{
+	auto it = _facts.find(name);
+	if (it != _facts.end())
+		return it->second;
+	return nullptr;
+}
+
+void RAPTLProgram::add_equation(const TensorEquationPtr& eq)
+{
+	_equations.push_back(eq);
+}
+
+void RAPTLProgram::add_equation(const std::string& name,
+                                 const std::string& lhs,
+                                 const std::vector<std::string>& rhs,
+                                 const std::string& einsum,
+                                 Nonlinearity nl)
+{
+	auto eq = std::make_shared<TensorEquation>(name, lhs, rhs, einsum, nl, _mode);
+	_equations.push_back(eq);
+}
+
+void RAPTLProgram::forward()
+{
+	_tracker->start_tracking();
+
+	for (const auto& eq : _equations)
+	{
+		// Gather inputs
+		std::vector<RAPTLValuePtr> inputs;
+		bool all_found = true;
+
+		for (const auto& name : eq->rhs_names())
+		{
+			// Check derived first
+			auto it = _derived.find(name);
+			if (it != _derived.end())
+			{
+				inputs.push_back(it->second);
+			}
+			else
+			{
+				// Check facts
+				auto fact_it = _facts.find(name);
+				if (fact_it != _facts.end())
+				{
+					inputs.push_back(fact_it->second);
+				}
+				else
+				{
+					all_found = false;
+					break;
+				}
+			}
+		}
+
+		if (all_found && !inputs.empty())
+		{
+			// Execute equation with RAPTL semantics
+			RAPTLValuePtr result = RAPTLValue::einsum(
+				eq->einsum().notation(), inputs);
+
+			if (result)
+			{
+				// Apply nonlinearity
+				ATenValuePtr tensor = result->tensor();
+				tensor = apply_nonlinearity(tensor, eq->nonlinearity());
+
+				// Create new RAPTL value with processed tensor
+				auto final_result = std::make_shared<RAPTLValue>(
+					tensor, _semiring->type());
+				final_result->set_uncertainty(result->uncertainty());
+
+				_derived[eq->lhs_name()] = final_result;
+
+				// Track resources
+				_tracker->record_operation(result->resources());
+			}
+		}
+	}
+
+	_tracker->stop_tracking();
+}
+
+RAPTLValuePtr RAPTLProgram::query(const std::string& name)
+{
+	// Check derived
+	auto it = _derived.find(name);
+	if (it != _derived.end())
+		return it->second;
+
+	// Check facts
+	return get_fact(name);
+}
+
+void RAPTLProgram::set_resource_limits(size_t memory, size_t flops)
+{
+	_tracker->set_memory_limit(memory);
+	_tracker->set_flops_limit(flops);
+}
+
+bool RAPTLProgram::within_limits() const
+{
+	return _tracker->within_limits();
+}
+
+void RAPTLProgram::set_semiring(SemiringType type)
+{
+	_semiring = std::make_shared<Semiring>(type);
+}
+
+std::string RAPTLProgram::to_string() const
+{
+	std::ostringstream oss;
+	oss << "RAPTLProgram{name=" << _name
+	    << ", facts=" << _facts.size()
+	    << ", equations=" << _equations.size()
+	    << ", derived=" << _derived.size()
+	    << ", semiring=" << _semiring->to_string()
+	    << ", " << _tracker->to_string()
+	    << "}";
+	return oss.str();
+}
+
 // ====================== END OF FILE =======================

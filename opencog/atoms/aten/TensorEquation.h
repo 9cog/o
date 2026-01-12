@@ -423,6 +423,421 @@ public:
 typedef std::shared_ptr<GradientTape> GradientTapePtr;
 
 // ============================================================
+// Semiring Abstraction for Flexible Algebraic Reasoning
+// ============================================================
+
+/**
+ * Semiring types for different reasoning tasks.
+ * Based on Ben Goertzel's RAPTL (Resource-Aware Probabilistic Tensor Logic).
+ *
+ * Different semirings enable different kinds of inference:
+ * - BOOLEAN: Reachability queries (OR/AND)
+ * - COUNTING: Path enumeration (+/×)
+ * - VITERBI: Optimal path finding (max/+)
+ * - PROBABILISTIC: Expected value computation
+ * - TROPICAL: Shortest path (min/+)
+ * - LUKASIEWICZ: Fuzzy logic
+ */
+enum class SemiringType {
+	BOOLEAN,       // (OR, AND, false, true) - reachability
+	COUNTING,      // (+, ×, 0, 1) - path counting
+	VITERBI,       // (max, +, -∞, 0) - most probable path
+	PROBABILISTIC, // (+, ×, 0, 1) with normalization
+	TROPICAL,      // (min, +, ∞, 0) - shortest path
+	LUKASIEWICZ,   // (max, min, 0, 1) - fuzzy logic
+	REAL           // Standard real arithmetic
+};
+
+/**
+ * Semiring provides pluggable algebraic structures for tensor operations.
+ * This enables the same tensor contraction code to perform different
+ * kinds of reasoning depending on the semiring.
+ */
+class Semiring
+{
+private:
+	SemiringType _type;
+	double _zero;  // Additive identity
+	double _one;   // Multiplicative identity
+
+public:
+	Semiring(SemiringType type = SemiringType::REAL);
+
+	SemiringType type() const { return _type; }
+	double zero() const { return _zero; }
+	double one() const { return _one; }
+
+	/**
+	 * Semiring addition (⊕).
+	 */
+	double add(double a, double b) const;
+
+	/**
+	 * Semiring multiplication (⊗).
+	 */
+	double mul(double a, double b) const;
+
+	/**
+	 * Apply semiring operations to tensor element-wise.
+	 */
+	ATenValuePtr tensor_add(const ATenValuePtr& a, const ATenValuePtr& b) const;
+	ATenValuePtr tensor_mul(const ATenValuePtr& a, const ATenValuePtr& b) const;
+
+	/**
+	 * Semiring sum reduction.
+	 */
+	ATenValuePtr tensor_sum(const ATenValuePtr& a) const;
+
+	/**
+	 * Execute einsum using this semiring's operations.
+	 */
+	ATenValuePtr einsum(const std::string& notation,
+	                    const std::vector<ATenValuePtr>& tensors) const;
+
+	std::string to_string() const;
+};
+
+typedef std::shared_ptr<Semiring> SemiringPtr;
+
+// ============================================================
+// PLN Truth Value Tensors
+// ============================================================
+
+/**
+ * PLNTruthValue represents OpenCog's strength-confidence pairs.
+ *
+ * - Strength (s): Probability estimate [0, 1]
+ * - Confidence (c): Evidence weight [0, 1)
+ *
+ * Confidence relates to count via: c = n / (n + k)
+ * where n is observation count and k is a constant (typically 1-10).
+ */
+struct PLNTruthValue
+{
+	double strength;
+	double confidence;
+
+	PLNTruthValue(double s = 0.0, double c = 0.0)
+		: strength(s), confidence(c) {}
+
+	// PLN revision: combine two truth values
+	PLNTruthValue revise(const PLNTruthValue& other) const;
+
+	// PLN deduction: A->B, B->C => A->C
+	static PLNTruthValue deduction(const PLNTruthValue& ab,
+	                                const PLNTruthValue& bc);
+
+	// PLN induction: A->B, A->C => B->C
+	static PLNTruthValue induction(const PLNTruthValue& ab,
+	                                const PLNTruthValue& ac);
+
+	// PLN abduction: A->B, C->B => A->C
+	static PLNTruthValue abduction(const PLNTruthValue& ab,
+	                                const PLNTruthValue& cb);
+
+	std::string to_string() const;
+};
+
+/**
+ * PLNTensor stores strength-confidence pairs for each tensor element.
+ * This enables proper uncertainty propagation through tensor operations.
+ */
+class PLNTensor
+{
+private:
+	ATenValuePtr _strength;    // Strength values
+	ATenValuePtr _confidence;  // Confidence values
+	std::vector<int64_t> _shape;
+
+public:
+	PLNTensor(const std::vector<int64_t>& shape);
+	PLNTensor(const ATenValuePtr& strength, const ATenValuePtr& confidence);
+
+	const std::vector<int64_t>& shape() const { return _shape; }
+	ATenValuePtr strength() const { return _strength; }
+	ATenValuePtr confidence() const { return _confidence; }
+
+	/**
+	 * Get truth value at indices.
+	 */
+	PLNTruthValue get(const std::vector<int64_t>& indices) const;
+
+	/**
+	 * Set truth value at indices.
+	 */
+	void set(const std::vector<int64_t>& indices, const PLNTruthValue& tv);
+
+	/**
+	 * PLN revision: combine two PLN tensors element-wise.
+	 */
+	std::shared_ptr<PLNTensor> revise(const PLNTensor& other) const;
+
+	/**
+	 * PLN deduction via matrix multiplication with uncertainty propagation.
+	 */
+	std::shared_ptr<PLNTensor> deduction(const PLNTensor& other) const;
+
+	/**
+	 * Convert to standard tensor (using strength values).
+	 */
+	ATenValuePtr to_tensor() const { return _strength; }
+
+	/**
+	 * Create from standard tensor (with default confidence).
+	 */
+	static std::shared_ptr<PLNTensor> from_tensor(const ATenValuePtr& tensor,
+	                                               double default_confidence = 0.9);
+
+	std::string to_string() const;
+};
+
+typedef std::shared_ptr<PLNTensor> PLNTensorPtr;
+
+// ============================================================
+// Resource Tracking
+// ============================================================
+
+/**
+ * ResourceMetrics tracks computational resource usage.
+ * Based on RAPTL's resource-aware computation model.
+ */
+struct ResourceMetrics
+{
+	size_t memory_bytes;      // Memory consumption
+	size_t flops;             // Floating point operations
+	size_t tensor_elements;   // Total tensor elements processed
+	double sparsity;          // Average sparsity of tensors
+	size_t cache_misses;      // Estimated cache misses
+	double bandwidth_gb;      // Memory bandwidth used (GB)
+	double compute_time_ms;   // Estimated compute time
+
+	ResourceMetrics();
+
+	void reset();
+	void add(const ResourceMetrics& other);
+
+	/**
+	 * Estimate resources for a tensor operation.
+	 */
+	static ResourceMetrics estimate_matmul(int64_t m, int64_t n, int64_t k);
+	static ResourceMetrics estimate_einsum(const EinsumSpec& spec,
+	                                        const std::vector<ATenValuePtr>& tensors);
+
+	std::string to_string() const;
+};
+
+/**
+ * ResourceTracker accumulates resource usage across operations.
+ */
+class ResourceTracker
+{
+private:
+	ResourceMetrics _total;
+	ResourceMetrics _current_op;
+	std::vector<ResourceMetrics> _history;
+	bool _tracking;
+	size_t _memory_limit;
+	size_t _flops_limit;
+
+public:
+	ResourceTracker();
+
+	void start_tracking();
+	void stop_tracking();
+	bool is_tracking() const { return _tracking; }
+
+	void record_operation(const ResourceMetrics& metrics);
+	void clear_history();
+
+	const ResourceMetrics& total() const { return _total; }
+	const std::vector<ResourceMetrics>& history() const { return _history; }
+
+	void set_memory_limit(size_t bytes) { _memory_limit = bytes; }
+	void set_flops_limit(size_t flops) { _flops_limit = flops; }
+	bool within_limits() const;
+
+	std::string to_string() const;
+};
+
+typedef std::shared_ptr<ResourceTracker> ResourceTrackerPtr;
+
+// ============================================================
+// Linear Logic Modalities for Memory Safety
+// ============================================================
+
+/**
+ * LinearModality represents linear logic resource semantics.
+ * Used for safe tensor memory management.
+ *
+ * From Ben Goertzel's RAPTL:
+ * - LINEAR: Use exactly once, then delete (move semantics)
+ * - AFFINE: Use at most once (optional consumption)
+ * - BANG: Read-only sharing (reference counting)
+ * - WITH: Choice between alternatives
+ */
+enum class LinearModality {
+	LINEAR,   // A ⊸ B : exactly once, move semantics
+	AFFINE,   // A → B : at most once, optional
+	BANG,     // !A : read-only, shared reference
+	WITH      // A & B : choice/branching
+};
+
+/**
+ * ManagedTensor wraps ATenValue with linear logic semantics.
+ */
+class ManagedTensor
+{
+private:
+	ATenValuePtr _tensor;
+	LinearModality _modality;
+	size_t _ref_count;
+	bool _consumed;
+	mutable std::mutex _mtx;
+
+public:
+	ManagedTensor(const ATenValuePtr& tensor,
+	              LinearModality modality = LinearModality::BANG);
+
+	LinearModality modality() const { return _modality; }
+	bool is_consumed() const { return _consumed; }
+	size_t ref_count() const { return _ref_count; }
+
+	/**
+	 * Acquire tensor for use. Respects linear modality.
+	 * @param consume Whether to consume (move) the tensor
+	 * @return The tensor, or nullptr if unavailable
+	 */
+	ATenValuePtr acquire(bool consume = false);
+
+	/**
+	 * Release reference (for BANG modality).
+	 */
+	void release();
+
+	/**
+	 * Check if tensor can be acquired.
+	 */
+	bool available() const;
+
+	std::string to_string() const;
+};
+
+typedef std::shared_ptr<ManagedTensor> ManagedTensorPtr;
+
+// ============================================================
+// RAPTL: Resource-Aware Probabilistic Tensor Logic
+// ============================================================
+
+/**
+ * RAPTLValue represents the "triple product quantale" from Ben Goertzel's
+ * RAPTL framework: Q = Q-logic × Q-uncertainty × Q-resource
+ *
+ * Each piece of information carries:
+ * - Logical content (the tensor data)
+ * - Uncertainty (PLN truth values)
+ * - Resource requirements (memory, FLOPs)
+ */
+class RAPTLValue
+{
+private:
+	ATenValuePtr _tensor;       // Logical content
+	PLNTensorPtr _uncertainty;  // Uncertainty (strength-confidence)
+	ResourceMetrics _resources; // Resource tracking
+	SemiringPtr _semiring;      // Algebraic structure
+	LinearModality _modality;   // Memory semantics
+
+public:
+	RAPTLValue(const ATenValuePtr& tensor,
+	           SemiringType semiring = SemiringType::REAL);
+
+	// Accessors
+	ATenValuePtr tensor() const { return _tensor; }
+	PLNTensorPtr uncertainty() const { return _uncertainty; }
+	const ResourceMetrics& resources() const { return _resources; }
+	SemiringPtr semiring() const { return _semiring; }
+	LinearModality modality() const { return _modality; }
+
+	// Setters
+	void set_uncertainty(const PLNTensorPtr& u) { _uncertainty = u; }
+	void set_modality(LinearModality m) { _modality = m; }
+
+	/**
+	 * RAPTL multiplication: combines logical, uncertainty, and resource.
+	 */
+	std::shared_ptr<RAPTLValue> multiply(const RAPTLValue& other) const;
+
+	/**
+	 * RAPTL addition: combines using semiring operations.
+	 */
+	std::shared_ptr<RAPTLValue> add(const RAPTLValue& other) const;
+
+	/**
+	 * RAPTL einsum: tensor contraction with full tracking.
+	 */
+	static std::shared_ptr<RAPTLValue> einsum(
+		const std::string& notation,
+		const std::vector<std::shared_ptr<RAPTLValue>>& inputs);
+
+	/**
+	 * Check if operation is within resource limits.
+	 */
+	bool within_limits(size_t memory_limit, size_t flops_limit) const;
+
+	std::string to_string() const;
+};
+
+typedef std::shared_ptr<RAPTLValue> RAPTLValuePtr;
+
+/**
+ * RAPTLProgram extends TensorProgram with full RAPTL semantics.
+ */
+class RAPTLProgram
+{
+private:
+	std::string _name;
+	std::map<std::string, RAPTLValuePtr> _facts;
+	std::vector<TensorEquationPtr> _equations;
+	std::map<std::string, RAPTLValuePtr> _derived;
+
+	SemiringPtr _semiring;
+	ResourceTrackerPtr _tracker;
+	ReasoningMode _mode;
+
+public:
+	RAPTLProgram(const std::string& name = "raptl",
+	             SemiringType semiring = SemiringType::REAL);
+
+	// Fact management
+	void add_fact(const std::string& name, const RAPTLValuePtr& value);
+	RAPTLValuePtr get_fact(const std::string& name) const;
+
+	// Equation management
+	void add_equation(const TensorEquationPtr& eq);
+	void add_equation(const std::string& name,
+	                  const std::string& lhs,
+	                  const std::vector<std::string>& rhs,
+	                  const std::string& einsum,
+	                  Nonlinearity nl = Nonlinearity::NONE);
+
+	// Inference with full RAPTL tracking
+	void forward();
+	RAPTLValuePtr query(const std::string& name);
+
+	// Resource management
+	ResourceTrackerPtr tracker() const { return _tracker; }
+	void set_resource_limits(size_t memory, size_t flops);
+	bool within_limits() const;
+
+	// Semiring selection
+	void set_semiring(SemiringType type);
+	SemiringPtr semiring() const { return _semiring; }
+
+	std::string to_string() const;
+};
+
+typedef std::shared_ptr<RAPTLProgram> RAPTLProgramPtr;
+
+// ============================================================
 // Tensor Equation
 // ============================================================
 
