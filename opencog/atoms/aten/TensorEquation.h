@@ -177,6 +177,10 @@ private:
 	ATenValuePtr _weight;           // Optional learnable weight tensor
 	ATenValuePtr _bias;             // Optional learnable bias tensor
 
+	// Accumulated gradients (reset by zero_grad())
+	ATenValuePtr _weight_grad;      // Gradient for weight
+	ATenValuePtr _bias_grad;        // Gradient for bias
+
 public:
 	/**
 	 * Construct a tensor equation.
@@ -215,6 +219,15 @@ public:
 	void set_weight(const ATenValuePtr& w) { _weight = w; }
 	void set_bias(const ATenValuePtr& b) { _bias = b; }
 
+	// Accumulated gradient accessors
+	ATenValuePtr weight_grad() const { return _weight_grad; }
+	ATenValuePtr bias_grad() const { return _bias_grad; }
+
+	/**
+	 * Reset accumulated gradients to zero.
+	 */
+	void zero_grad();
+
 	/**
 	 * Execute the equation with given input tensors.
 	 *
@@ -234,11 +247,16 @@ public:
 
 	/**
 	 * Compute gradient of output with respect to inputs.
-	 * Used for backpropagation in continuous mode.
+	 * Accumulates gradients into _weight_grad and _bias_grad when
+	 * is_learnable() is true.
+	 *
+	 * @param grad_output gradient of loss with respect to this equation's output
+	 * @param inputs the input tensors used in the forward pass
+	 * @return gradients with respect to each input tensor (same order as inputs)
 	 */
 	std::vector<ATenValuePtr> backward(
 		const ATenValuePtr& grad_output,
-		const std::vector<ATenValuePtr>& inputs) const;
+		const std::vector<ATenValuePtr>& inputs);
 
 	std::string to_string() const;
 };
@@ -284,6 +302,9 @@ private:
 	// For learning
 	double _learning_rate;
 	bool _track_gradients;
+
+	// Accumulated tensor gradients (keyed by tensor name)
+	std::map<std::string, ATenValuePtr> _tensor_grads;
 
 	// Statistics
 	size_t _forward_count;

@@ -1611,4 +1611,265 @@ public:
 		TS_ASSERT_DELTA(vec[0], 1.0, 1e-10);
 		TS_ASSERT_DELTA(vec[4], 5.0, 1e-10);
 	}
+
+	// ========================================
+	// TensorEquation gradient tests
+	// ========================================
+
+	void test_tensor_equation_zero_grad()
+	{
+		// Verify zero_grad clears accumulated gradients
+		TensorEquation eq("test_eq", "out", {"in"},
+		                  "i->i", Nonlinearity::NONE);
+		eq.set_learnable(true);
+
+		ATenValuePtr weight = createATenFromVector({2.0, 2.0, 2.0}, {3});
+		ATenValuePtr bias = createATenFromVector({0.1, 0.1, 0.1}, {3});
+		eq.set_weight(weight);
+		eq.set_bias(bias);
+
+		// Run backward to accumulate gradients
+		ATenValuePtr in = createATenFromVector({1.0, 2.0, 3.0}, {3});
+		ATenValuePtr grad = createATenFromVector({0.5, 0.5, 0.5}, {3});
+		eq.backward(grad, {in});
+
+		// After backward, weight_grad and bias_grad should be set
+		TS_ASSERT(eq.weight_grad() != nullptr);
+		TS_ASSERT(eq.bias_grad() != nullptr);
+
+		// After zero_grad, they should be cleared
+		eq.zero_grad();
+		TS_ASSERT(eq.weight_grad() == nullptr);
+		TS_ASSERT(eq.bias_grad() == nullptr);
+	}
+
+	void test_tensor_equation_backward_bias_grad()
+	{
+		// Test that bias gradient is correctly computed
+		TensorEquation eq("bias_eq", "out", {"in"},
+		                  "i->i", Nonlinearity::NONE);
+		eq.set_learnable(true);
+
+		// No weight, just bias
+		ATenValuePtr bias = createATenFromVector({0.0, 0.0, 0.0}, {3});
+		eq.set_bias(bias);
+
+		ATenValuePtr in = createATenFromVector({1.0, 2.0, 3.0}, {3});
+		ATenValuePtr grad_out = createATenFromVector({1.0, 1.0, 1.0}, {3});
+
+		// Backward with NONE nonlinearity: grad passes straight through to bias
+		eq.backward(grad_out, {in});
+
+		TS_ASSERT(eq.bias_grad() != nullptr);
+		auto bg = eq.bias_grad()->to_vector();
+		TS_ASSERT_EQUALS(bg.size(), 3);
+		// Bias gradient equals the output gradient for NONE nonlinearity
+		TS_ASSERT_DELTA(bg[0], 1.0, 1e-10);
+		TS_ASSERT_DELTA(bg[1], 1.0, 1e-10);
+		TS_ASSERT_DELTA(bg[2], 1.0, 1e-10);
+	}
+
+	void test_tensor_equation_backward_weight_grad()
+	{
+		// Test that weight gradient is correctly computed
+		TensorEquation eq("weight_eq", "out", {"in"},
+		                  "i->i", Nonlinearity::NONE);
+		eq.set_learnable(true);
+
+		ATenValuePtr weight = createATenFromVector({1.0, 1.0, 1.0}, {3});
+		eq.set_weight(weight);
+
+		ATenValuePtr in = createATenFromVector({2.0, 3.0, 4.0}, {3});
+		ATenValuePtr grad_out = createATenFromVector({1.0, 1.0, 1.0}, {3});
+
+		eq.backward(grad_out, {in});
+
+		TS_ASSERT(eq.weight_grad() != nullptr);
+		auto wg = eq.weight_grad()->to_vector();
+		TS_ASSERT_EQUALS(wg.size(), 3);
+		// Weight gradient = einsum_result * grad = in * grad_out = [2,3,4] for i->i
+		TS_ASSERT_DELTA(wg[0], 2.0, 1e-10);
+		TS_ASSERT_DELTA(wg[1], 3.0, 1e-10);
+		TS_ASSERT_DELTA(wg[2], 4.0, 1e-10);
+	}
+
+	void test_tensor_equation_backward_sigmoid_grad()
+	{
+		// Test that sigmoid gradient is applied correctly
+		TensorEquation eq("sigmoid_eq", "out", {"in"},
+		                  "i->i", Nonlinearity::SIGMOID);
+		eq.set_learnable(true);
+
+		ATenValuePtr bias = createATenFromVector({0.0}, {1});
+		eq.set_bias(bias);
+
+		// Input 0.0 → sigmoid(0.0) = 0.5 → derivative = 0.5 * 0.5 = 0.25
+		ATenValuePtr in = createATenFromVector({0.0}, {1});
+		ATenValuePtr grad_out = createATenFromVector({1.0}, {1});
+
+		eq.backward(grad_out, {in});
+
+		TS_ASSERT(eq.bias_grad() != nullptr);
+		double bg = eq.bias_grad()->to_vector()[0];
+		// d/dx sigmoid(0) = 0.5 * 0.5 = 0.25
+		TS_ASSERT_DELTA(bg, 0.25, 1e-10);
+	}
+
+	void test_tensor_equation_backward_relu_grad()
+	{
+		// Test that ReLU gradient is applied correctly
+		TensorEquation eq("relu_eq", "out", {"in"},
+		                  "i->i", Nonlinearity::RELU);
+		eq.set_learnable(true);
+
+		ATenValuePtr bias = createATenFromVector({0.0, 0.0}, {2});
+		eq.set_bias(bias);
+
+		// Input: positive → grad passes through; negative → grad is zeroed
+		ATenValuePtr in = createATenFromVector({2.0, -1.0}, {2});
+		ATenValuePtr grad_out = createATenFromVector({1.0, 1.0}, {2});
+
+		eq.backward(grad_out, {in});
+
+		TS_ASSERT(eq.bias_grad() != nullptr);
+		auto bg = eq.bias_grad()->to_vector();
+		TS_ASSERT_DELTA(bg[0], 1.0, 1e-10);  // positive input: passes
+		TS_ASSERT_DELTA(bg[1], 0.0, 1e-10);  // negative input: blocked
+	}
+
+	void test_tensor_equation_backward_input_grad_matmul()
+	{
+		// Test that input gradients are correctly computed for matmul
+		// Forward: out = in1 @ in2 (ij,jk->ik)
+		TensorEquation eq("matmul_eq", "out", {"in1", "in2"},
+		                  "ij,jk->ik", Nonlinearity::NONE);
+
+		// in1: [2,3], in2: [3,2] → out: [2,2]
+		ATenValuePtr in1 = createATenFromVector({1.0, 0.0, 0.0,
+		                                         0.0, 1.0, 0.0}, {2, 3});
+		ATenValuePtr in2 = createATenFromVector({1.0, 0.0,
+		                                         0.0, 1.0,
+		                                         0.0, 0.0}, {3, 2});
+		ATenValuePtr grad_out = createATenFromVector({1.0, 0.0,
+		                                              0.0, 1.0}, {2, 2});
+
+		auto input_grads = eq.backward(grad_out, {in1, in2});
+
+		TS_ASSERT_EQUALS(input_grads.size(), 2);
+		TS_ASSERT(input_grads[0] != nullptr);
+		TS_ASSERT(input_grads[1] != nullptr);
+
+		// grad for in1 should have shape [2,3]
+		auto g0_shape = input_grads[0]->shape();
+		TS_ASSERT_EQUALS(g0_shape.size(), 2);
+		TS_ASSERT_EQUALS(g0_shape[0], 2);
+		TS_ASSERT_EQUALS(g0_shape[1], 3);
+
+		// grad for in2 should have shape [3,2]
+		auto g1_shape = input_grads[1]->shape();
+		TS_ASSERT_EQUALS(g1_shape.size(), 2);
+		TS_ASSERT_EQUALS(g1_shape[0], 3);
+		TS_ASSERT_EQUALS(g1_shape[1], 2);
+	}
+
+	// ========================================
+	// TensorProgram backward/update tests
+	// ========================================
+
+	void test_tensor_program_backward_count()
+	{
+		// Backward should increment the counter
+		TensorProgram prog("test_bwd");
+
+		ATenValuePtr fact = createATenFromVector({1.0, 0.0, 0.0,
+		                                          0.0, 1.0, 0.0}, {2, 3});
+		prog.add_fact("in", fact);
+		prog.add_equation("eq1", "out", {"in"}, "ij->ij");
+		prog.forward();
+
+		TS_ASSERT_EQUALS(prog.backward_count(), 0);
+
+		ATenValuePtr grad = createATenFromVector({0.1, 0.1, 0.1,
+		                                          0.1, 0.1, 0.1}, {2, 3});
+		prog.backward("out", grad);
+
+		TS_ASSERT_EQUALS(prog.backward_count(), 1);
+	}
+
+	void test_tensor_program_update_parameters_weight()
+	{
+		// Test that update_parameters actually updates weight toward target
+		TensorProgram prog("learn_test");
+		prog.set_learning_rate(0.1);
+
+		// Fact: identity input
+		ATenValuePtr in = createATenFromVector({1.0, 2.0, 3.0}, {3});
+		prog.add_fact("in", in);
+
+		// Learnable equation: out = in * weight  (i->i with weight)
+		prog.add_equation("eq1", "out", {"in"}, "i->i");
+		TensorEquationPtr eq = prog.get_equation("eq1");
+		eq->set_learnable(true);
+		ATenValuePtr initial_weight = createATenFromVector({1.0, 1.0, 1.0}, {3});
+		eq->set_weight(initial_weight);
+
+		// Forward pass
+		prog.forward();
+
+		// Backward with a gradient (simulate d_loss/d_out = [1,1,1])
+		ATenValuePtr grad_out = createATenFromVector({1.0, 1.0, 1.0}, {3});
+		prog.backward("out", grad_out);
+
+		// Record weight before update
+		auto w_before = eq->weight()->to_vector();
+
+		// Update parameters
+		prog.update_parameters();
+
+		// Weight should have changed (gradient descent step applied)
+		auto w_after = eq->weight()->to_vector();
+		bool changed = false;
+		for (size_t i = 0; i < w_before.size(); i++)
+		{
+			if (std::abs(w_before[i] - w_after[i]) > 1e-12)
+			{
+				changed = true;
+				break;
+			}
+		}
+		TS_ASSERT(changed);
+
+		// Gradients should be cleared after update
+		TS_ASSERT(eq->weight_grad() == nullptr);
+	}
+
+	void test_tensor_program_train_reduces_loss()
+	{
+		// Train a simple linear equation: out = in * w → target
+		TensorProgram prog("train_test");
+		prog.set_learning_rate(0.01);
+
+		ATenValuePtr in = createATenFromVector({1.0, 2.0, 3.0}, {3});
+		ATenValuePtr target = createATenFromVector({2.0, 4.0, 6.0}, {3});
+
+		prog.add_fact("in", in);
+		prog.add_equation("eq1", "out", {"in"}, "i->i");
+
+		TensorEquationPtr eq = prog.get_equation("eq1");
+		eq->set_learnable(true);
+		// Start with weight = 0.5 (off from target factor 2.0)
+		ATenValuePtr init_weight = createATenFromVector({0.5, 0.5, 0.5}, {3});
+		eq->set_weight(init_weight);
+
+		// Get initial loss
+		prog.forward();
+		double loss_before = prog.compute_loss("out", target);
+
+		// Train for several epochs
+		std::map<std::string, ATenValuePtr> targets_map = {{"out", target}};
+		double final_loss = prog.train({}, targets_map, 20);
+
+		// Loss should have decreased
+		TS_ASSERT(final_loss < loss_before);
+	}
 };
