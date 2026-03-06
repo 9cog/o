@@ -959,10 +959,15 @@ void TensorLogic::backpropagate(const ATenValuePtr& loss)
 		std::vector<double> updated(emb_vec.size());
 
 		// Simple gradient descent step: reduce embedding values proportional to loss
-		// This is a simplified backprop for demonstration purposes
+		// NOTE: This is a simplified backprop implementation for basic gradient updates.
+		// For full neural network backpropagation, a proper autograd system would be needed.
+
+		// Gradient scaling factor - controls how strongly the loss affects updates
+		constexpr double GRADIENT_SCALE = 0.1;
+
 		for (size_t i = 0; i < emb_vec.size(); i++) {
-			// Gradient approximation: scale by loss and small random perturbation
-			double grad = loss_scalar * emb_vec[i] * 0.1;
+			// Gradient approximation: scale by loss and gradient factor
+			double grad = loss_scalar * emb_vec[i] * GRADIENT_SCALE;
 			updated[i] = emb_vec[i] - learning_rate * grad;
 		}
 
@@ -1039,8 +1044,8 @@ void TensorLogic::load_embeddings(const std::string& path)
 		// Lookup atom in atomspace (if available) and set embedding
 		if (_atomspace) {
 			// Try to find the atom by its string representation
-			// This is a simplified lookup - in practice, would need proper parsing
-			// For now, try to find nodes with matching names
+			// NOTE: This is a simplified lookup that matches by to_short_string().
+			// For production use, consider proper atom string parsing.
 			HandleSeq atoms;
 			_atomspace->get_handles_by_type(atoms, NODE, true);
 
@@ -1048,8 +1053,12 @@ void TensorLogic::load_embeddings(const std::string& path)
 				if (h->to_short_string() == atom_str) {
 					ATenValuePtr emb = createATenFromVector(vec, {emb_dim});
 					auto entity_emb = std::make_shared<EntityEmbedding>(h, emb, 0);
+
+					// Only increment count if this is a new embedding
+					bool is_new = (_embeddings.find(h) == _embeddings.end());
 					_embeddings[h] = entity_emb;
-					_num_embeddings++;
+					if (is_new)
+						_num_embeddings++;
 
 					if (_embedding_key)
 						_atomspace->set_value(h, _embedding_key, emb);

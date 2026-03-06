@@ -1525,6 +1525,7 @@ public:
 		logic.set_embedding(atom2, emb2);
 
 		// Save embeddings
+		// Note: Uses /tmp/ consistent with other tests in this project (Linux-focused)
 		std::string temp_path = "/tmp/test_embeddings.bin";
 		logic.save_embeddings(temp_path);
 
