@@ -611,31 +611,223 @@ ATenValuePtr TensorEquation::execute(
 
 std::vector<ATenValuePtr> TensorEquation::backward(
 	const ATenValuePtr& grad_output,
-	const std::vector<ATenValuePtr>& inputs) const
+	const std::vector<ATenValuePtr>& inputs)
 {
-	// Simplified gradient computation
-	// A full implementation would compute proper einsum gradients
-	std::vector<ATenValuePtr> gradients;
+	if (!grad_output || inputs.empty()) return {};
 
-	// For each input, the gradient is roughly grad_output * (other inputs)
-	// This is a simplification; proper einsum gradients are more complex
+	// Step 1: Re-execute einsum forward pass to get intermediate values
+	ATenValuePtr einsum_result = opencog::einsum(_einsum.notation(), inputs);
+
+	// Step 2: Backpropagate through nonlinearity
+	// Recompute pre-activation value
+	ATenValuePtr pre_activation = einsum_result;
+	if (_weight)
+		pre_activation = ATenValueCast(pre_activation->mul(*_weight));
+	if (_bias)
+		pre_activation = ATenValueCast(pre_activation->add(*_bias));
+
+	// Compute gradient through the activation function
+	auto pre_act_vec = pre_activation->to_vector();
+	auto grad_vec = grad_output->to_vector();
+	std::vector<double> grad_pre_act(grad_vec.size());
+
+	Nonlinearity effective_nl = (_mode == ReasoningMode::BOOLEAN)
+		? Nonlinearity::THRESHOLD : _nonlinearity;
+
+	for (size_t i = 0; i < grad_vec.size() && i < pre_act_vec.size(); i++)
+	{
+		double x = pre_act_vec[i];
+		double g = grad_vec[i];
+
+		switch (effective_nl)
+		{
+		case Nonlinearity::SIGMOID:
+			// d/dx sigmoid(x) = sigmoid(x) * (1 - sigmoid(x))
+			{
+				double s = 1.0 / (1.0 + std::exp(-x));
+				grad_pre_act[i] = g * s * (1.0 - s);
+			}
+			break;
+		case Nonlinearity::RELU:
+			// d/dx relu(x) = 1 if x > 0, else 0
+			grad_pre_act[i] = (x > 0.0) ? g : 0.0;
+			break;
+		case Nonlinearity::TANH:
+			// d/dx tanh(x) = 1 - tanh(x)^2
+			{
+				double t = std::tanh(x);
+				grad_pre_act[i] = g * (1.0 - t * t);
+			}
+			break;
+		case Nonlinearity::CLAMP01:
+			// d/dx clamp(x, 0, 1) = 1 if 0 < x < 1, else 0
+			grad_pre_act[i] = (x > 0.0 && x < 1.0) ? g : 0.0;
+			break;
+		case Nonlinearity::THRESHOLD:
+			// Non-differentiable — use straight-through estimator (pass-through)
+			grad_pre_act[i] = g;
+			break;
+		default:
+			// NONE, LOG, EXP, SOFTMAX: pass-through
+			grad_pre_act[i] = g;
+			break;
+		}
+	}
+
+	ATenValuePtr grad_before_nl = createATenFromVector(grad_pre_act, grad_output->shape());
+
+	// Step 3: Gradient for bias — sum over any broadcast/batch dimensions.
+	// For forward: out[..., d] = einsum[..., d] + bias[d]
+	// Grad bias[d] = sum of all grad_pre_act elements mapped to d.
+	if (_learnable && _bias)
+	{
+		auto bias_shape = _bias->shape();
+		size_t bias_numel = _bias->numel();
+		std::vector<double> bias_grad_vec(bias_numel, 0.0);
+
+		if (grad_pre_act.size() == bias_numel)
+		{
+			bias_grad_vec = grad_pre_act;
+		}
+		else if (bias_numel == 1)
+		{
+			double sum = 0.0;
+			for (double g : grad_pre_act) sum += g;
+			bias_grad_vec[0] = sum;
+		}
+		else
+		{
+			// Sum (not average) over broadcast dimensions.
+			for (size_t i = 0; i < grad_pre_act.size(); i++)
+				bias_grad_vec[i % bias_numel] += grad_pre_act[i];
+		}
+
+		// Accumulate into stored bias gradient
+		if (_bias_grad)
+		{
+			auto prev = _bias_grad->to_vector();
+			for (size_t i = 0; i < bias_grad_vec.size() && i < prev.size(); i++)
+				bias_grad_vec[i] += prev[i];
+		}
+		_bias_grad = createATenFromVector(bias_grad_vec, bias_shape);
+	}
+
+	// Step 4: Gradient for weight and gradient flowing into einsum
+	ATenValuePtr grad_einsum = grad_before_nl;
+	if (_weight)
+	{
+		if (_learnable)
+		{
+			// grad_weight[d] = sum of einsum_result[..., d] * grad_pre_act[..., d]
+			// (sum, not average, over any broadcast dimensions)
+			auto einsum_vec = einsum_result->to_vector();
+			auto w_shape = _weight->shape();
+			size_t w_numel = _weight->numel();
+			std::vector<double> weight_grad_vec(w_numel, 0.0);
+
+			if (w_numel == 1)
+			{
+				double sum = 0.0;
+				for (size_t i = 0; i < einsum_vec.size() && i < grad_pre_act.size(); i++)
+					sum += einsum_vec[i] * grad_pre_act[i];
+				weight_grad_vec[0] = sum;
+			}
+			else if (w_numel == einsum_vec.size())
+			{
+				for (size_t i = 0; i < einsum_vec.size() && i < grad_pre_act.size(); i++)
+					weight_grad_vec[i] = einsum_vec[i] * grad_pre_act[i];
+			}
+			else
+			{
+				// Sum over broadcast dimensions.
+				for (size_t i = 0; i < einsum_vec.size() && i < grad_pre_act.size(); i++)
+					weight_grad_vec[i % w_numel] += einsum_vec[i] * grad_pre_act[i];
+			}
+
+			// Accumulate into stored weight gradient
+			if (_weight_grad)
+			{
+				auto prev = _weight_grad->to_vector();
+				for (size_t i = 0; i < weight_grad_vec.size() && i < prev.size(); i++)
+					weight_grad_vec[i] += prev[i];
+			}
+			_weight_grad = createATenFromVector(weight_grad_vec, w_shape);
+		}
+
+		// Gradient flowing into einsum: grad_einsum = grad_before_nl * weight
+		auto w_vec = _weight->to_vector();
+		auto g_vec = grad_before_nl->to_vector();
+		std::vector<double> grad_einsum_vec(g_vec.size());
+
+		if (w_vec.size() == 1)
+		{
+			for (size_t i = 0; i < g_vec.size(); i++)
+				grad_einsum_vec[i] = g_vec[i] * w_vec[0];
+		}
+		else if (w_vec.size() == g_vec.size())
+		{
+			for (size_t i = 0; i < g_vec.size(); i++)
+				grad_einsum_vec[i] = g_vec[i] * w_vec[i];
+		}
+		else
+		{
+			for (size_t i = 0; i < g_vec.size(); i++)
+				grad_einsum_vec[i] = g_vec[i] * w_vec[i % w_vec.size()];
+		}
+
+		grad_einsum = createATenFromVector(grad_einsum_vec, grad_before_nl->shape());
+	}
+
+	// Step 5: Backpropagate through einsum for each input
+	// For input i with spec s_i, gradient = einsum(out_spec, s_j (j≠i), -> s_i, grad, inputs[j≠i])
+	std::vector<ATenValuePtr> input_grads;
+	const auto& specs = _einsum.input_specs();
+	const std::string& out_spec = _einsum.output_spec();
 
 	for (size_t i = 0; i < inputs.size(); i++)
 	{
-		// Create a gradient tensor of the same shape as input
-		auto shape = inputs[i]->shape();
-		std::vector<double> grad_data(inputs[i]->numel(), 0.0);
+		// Build transposed einsum notation: out_spec, s_j (j≠i) -> s_i
+		std::string transposed = out_spec;
+		for (size_t j = 0; j < inputs.size(); j++)
+		{
+			if (j != i)
+				transposed += "," + specs[j];
+		}
+		transposed += "->" + specs[i];
 
-		// Simplified: just propagate mean gradient
-		ATenValuePtr mean_val = ATenValueCast(grad_output->mean());
-		double mean_grad = mean_val->item();
-		for (auto& g : grad_data)
-			g = mean_grad;
+		// Gather tensors: [grad_einsum, inputs[j≠i], ...]
+		std::vector<ATenValuePtr> grad_tensors;
+		grad_tensors.push_back(grad_einsum);
+		for (size_t j = 0; j < inputs.size(); j++)
+		{
+			if (j != i)
+				grad_tensors.push_back(inputs[j]);
+		}
 
-		gradients.push_back(createATenFromVector(grad_data, shape));
+		try
+		{
+			ATenValuePtr input_grad = opencog::einsum(transposed, grad_tensors);
+			input_grads.push_back(input_grad);
+		}
+		catch (...)
+		{
+			// Fallback: broadcast mean gradient if transposed einsum fails
+			auto shape = inputs[i]->shape();
+			std::vector<double> fallback(inputs[i]->numel(), 0.0);
+			ATenValuePtr mean_val = ATenValueCast(grad_einsum->mean());
+			double mean_g = mean_val->item();
+			for (auto& g : fallback) g = mean_g;
+			input_grads.push_back(createATenFromVector(fallback, shape));
+		}
 	}
 
-	return gradients;
+	return input_grads;
+}
+
+void TensorEquation::zero_grad()
+{
+	_weight_grad = nullptr;
+	_bias_grad = nullptr;
 }
 
 std::string TensorEquation::to_string() const
@@ -913,21 +1105,120 @@ void TensorProgram::backward(const std::string& output_name,
                               const ATenValuePtr& grad_output)
 {
 	_backward_count++;
-	// Simplified backpropagation - a full implementation would
-	// track computation graph and compute proper gradients
+
+	if (!grad_output) return;
+
+	// Accumulate gradient for this tensor
+	auto it = _tensor_grads.find(output_name);
+	if (it != _tensor_grads.end())
+	{
+		auto prev = it->second->to_vector();
+		auto cur = grad_output->to_vector();
+		for (size_t i = 0; i < prev.size() && i < cur.size(); i++)
+			cur[i] += prev[i];
+		_tensor_grads[output_name] = createATenFromVector(cur, grad_output->shape());
+	}
+	else
+	{
+		_tensor_grads[output_name] = grad_output;
+	}
+
+	// Find equations that produce this output and backpropagate through them
+	auto eqs = find_deriving_equations(output_name);
+
+	for (const auto& eq : eqs)
+	{
+		// Collect the input tensors used in the forward pass
+		std::vector<ATenValuePtr> input_tensors;
+		bool all_found = true;
+
+		for (const auto& name : eq->rhs_names())
+		{
+			ATenValuePtr tensor = get_tensor(name);
+			if (!tensor)
+			{
+				all_found = false;
+				break;
+			}
+			input_tensors.push_back(tensor);
+		}
+
+		if (!all_found) continue;
+
+		// Compute gradients through this equation (accumulates weight/bias grads)
+		std::vector<ATenValuePtr> input_grads =
+			eq->backward(grad_output, input_tensors);
+
+		// Recursively propagate gradients to upstream equations
+		for (size_t i = 0; i < input_grads.size() && i < eq->rhs_names().size(); i++)
+		{
+			const std::string& input_name = eq->rhs_names()[i];
+			if (!input_grads[i]) continue;
+
+			// Propagate into derived tensors; facts receive gradient but
+			// we don't recurse further (they have no producing equations)
+			if (has_fact(input_name))
+			{
+				auto& fg = _tensor_grads[input_name];
+				if (fg)
+				{
+					auto prev = fg->to_vector();
+					auto cur = input_grads[i]->to_vector();
+					for (size_t j = 0; j < prev.size() && j < cur.size(); j++)
+						cur[j] += prev[j];
+					_tensor_grads[input_name] = createATenFromVector(cur, input_grads[i]->shape());
+				}
+				else
+				{
+					_tensor_grads[input_name] = input_grads[i];
+				}
+			}
+			else
+			{
+				backward(input_name, input_grads[i]);
+			}
+		}
+	}
 }
 
 void TensorProgram::update_parameters()
 {
 	for (auto& eq : _equations)
 	{
-		if (eq->is_learnable())
+		if (!eq->is_learnable()) continue;
+
+		// Update weight using accumulated gradient
+		if (eq->weight() && eq->weight_grad())
 		{
-			// Update weight and bias using stored gradients
-			// This is a placeholder - actual implementation would use
-			// computed gradients
+			auto w_vec = eq->weight()->to_vector();
+			auto g_vec = eq->weight_grad()->to_vector();
+			auto w_shape = eq->weight()->shape();
+
+			for (size_t i = 0; i < w_vec.size() && i < g_vec.size(); i++)
+				w_vec[i] -= _learning_rate * g_vec[i];
+
+			eq->set_weight(createATenFromVector(w_vec, w_shape));
 		}
+
+		// Update bias using accumulated gradient
+		if (eq->bias() && eq->bias_grad())
+		{
+			auto b_vec = eq->bias()->to_vector();
+			auto g_vec = eq->bias_grad()->to_vector();
+			auto b_shape = eq->bias()->shape();
+
+			for (size_t i = 0; i < b_vec.size() && i < g_vec.size(); i++)
+				b_vec[i] -= _learning_rate * g_vec[i];
+
+			eq->set_bias(createATenFromVector(b_vec, b_shape));
+		}
+
+		// Reset accumulated gradients for next iteration
+		eq->zero_grad();
 	}
+
+	// Clear tensor gradients
+	_tensor_grads.clear();
 }
 
 double TensorProgram::train(
