@@ -1022,17 +1022,32 @@ void TensorLogic::load_embeddings(const std::string& path)
 	file.read(reinterpret_cast<char*>(&num), sizeof(num));
 	file.read(reinterpret_cast<char*>(&emb_dim), sizeof(emb_dim));
 
+	// Validate header values
+	if (num < 0 || num > 10000000) {
+		throw RuntimeException(TRACE_INFO,
+			"Invalid embedding count in file: %ld", num);
+	}
+
 	if (emb_dim != _embedding_dim) {
 		throw RuntimeException(TRACE_INFO,
 			"Embedding dimension mismatch: expected %ld, got %ld",
 			_embedding_dim, emb_dim);
 	}
 
+	// Maximum allowed string length (to prevent DoS from malformed files)
+	constexpr int64_t MAX_STRING_LEN = 1024 * 1024;
+
 	// Read embeddings
 	for (int64_t i = 0; i < num; i++) {
 		// Read atom string
 		int64_t str_len = 0;
 		file.read(reinterpret_cast<char*>(&str_len), sizeof(str_len));
+
+		// Validate string length
+		if (str_len < 0 || str_len > MAX_STRING_LEN) {
+			throw RuntimeException(TRACE_INFO,
+				"Invalid string length in embedding file: %ld", str_len);
+		}
 
 		std::string atom_str(str_len, '\0');
 		file.read(&atom_str[0], str_len);
