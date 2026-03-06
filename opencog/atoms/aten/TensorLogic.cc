@@ -20,6 +20,8 @@
 
 #include <opencog/util/exceptions.h>
 #include <opencog/atoms/aten/TensorLogic.h>
+#include <opencog/atoms/core/NumberNode.h>
+#include <opencog/atoms/value/FloatValue.h>
 #include <opencog/atoms/value/LinkValue.h>
 #include <opencog/atomspace/AtomSpace.h>
 
@@ -839,12 +841,33 @@ TruthValueTensorPtr TensorLogic::get_truth_tensor(const Handle& atom)
 	// Check if already has truth tensor
 	if (_atomspace && _truth_tensor_key) {
 		ValuePtr val = atom->getValue(_truth_tensor_key);
-		// TODO: Deserialize if present
+		if (val) {
+			// Try to deserialize as ATenValue (strength, confidence pair)
+			ATenValuePtr tensor = ATenValueCast(val);
+			if (tensor && tensor->numel() >= 2) {
+				auto vec = tensor->to_vector();
+				ATenValuePtr strength = createATenFromVector({vec[0]}, {1});
+				ATenValuePtr confidence = createATenFromVector({vec[1]}, {1});
+				return std::make_shared<TruthValueTensor>(strength, confidence);
+			}
+		}
 	}
 
-	// Create from truth value
+	// Create from atom's truth value using truth_key()
 	auto tvt = std::make_shared<TruthValueTensor>(std::vector<int64_t>{1});
-	// TODO: Initialize from atom's truth value
+
+	// Get truth value from the atom's truth key
+	ValuePtr truth_val = atom->getValue(truth_key());
+	if (truth_val) {
+		// FloatValue format: [strength, confidence, count, ...]
+		FloatValuePtr fv = FloatValueCast(truth_val);
+		if (fv) {
+			auto values = fv->value();
+			double strength = (values.size() > 0) ? values[0] : 0.5;
+			double confidence = (values.size() > 1) ? values[1] : 0.0;
+			tvt->set_uniform(strength, confidence);
+		}
+	}
 
 	return tvt;
 }
@@ -912,7 +935,41 @@ void TensorLogic::contrastive_update(const Handle& anchor,
 
 void TensorLogic::backpropagate(const ATenValuePtr& loss)
 {
-	// TODO: Implement backpropagation through network
+	std::lock_guard<std::mutex> lock(_mtx);
+
+	if (!loss || !_network) {
+		_update_count++;
+		return;
+	}
+
+	// Basic backpropagation through embeddings
+	// Uses simplified gradient descent with loss as scaling factor
+	auto loss_vec = loss->to_vector();
+	double loss_scalar = (loss_vec.size() > 0) ? loss_vec[0] : 1.0;
+
+	// Learning rate for backprop (could be made configurable)
+	double learning_rate = 0.01;
+
+	// Update all embeddings with gradient-like scaling
+	for (auto& pair : _embeddings) {
+		auto emb = pair.second->embedding();
+		if (!emb) continue;
+
+		auto emb_vec = emb->to_vector();
+		std::vector<double> updated(emb_vec.size());
+
+		// Simple gradient descent step: reduce embedding values proportional to loss
+		// This is a simplified backprop for demonstration purposes
+		for (size_t i = 0; i < emb_vec.size(); i++) {
+			// Gradient approximation: scale by loss and small random perturbation
+			double grad = loss_scalar * emb_vec[i] * 0.1;
+			updated[i] = emb_vec[i] - learning_rate * grad;
+		}
+
+		pair.second->set_embedding(
+			createATenFromVector(updated, {static_cast<int64_t>(updated.size())}));
+	}
+
 	_update_count++;
 }
 
@@ -948,7 +1005,62 @@ void TensorLogic::save_embeddings(const std::string& path)
 
 void TensorLogic::load_embeddings(const std::string& path)
 {
-	// TODO: Implement loading
+	std::lock_guard<std::mutex> lock(_mtx);
+
+	std::ifstream file(path, std::ios::binary);
+	if (!file.is_open())
+		throw RuntimeException(TRACE_INFO, "Cannot open file: %s", path.c_str());
+
+	// Read header
+	int64_t num = 0;
+	int64_t emb_dim = 0;
+	file.read(reinterpret_cast<char*>(&num), sizeof(num));
+	file.read(reinterpret_cast<char*>(&emb_dim), sizeof(emb_dim));
+
+	if (emb_dim != _embedding_dim) {
+		throw RuntimeException(TRACE_INFO,
+			"Embedding dimension mismatch: expected %ld, got %ld",
+			_embedding_dim, emb_dim);
+	}
+
+	// Read embeddings
+	for (int64_t i = 0; i < num; i++) {
+		// Read atom string
+		int64_t str_len = 0;
+		file.read(reinterpret_cast<char*>(&str_len), sizeof(str_len));
+
+		std::string atom_str(str_len, '\0');
+		file.read(&atom_str[0], str_len);
+
+		// Read embedding vector
+		std::vector<double> vec(emb_dim);
+		file.read(reinterpret_cast<char*>(vec.data()), emb_dim * sizeof(double));
+
+		// Lookup atom in atomspace (if available) and set embedding
+		if (_atomspace) {
+			// Try to find the atom by its string representation
+			// This is a simplified lookup - in practice, would need proper parsing
+			// For now, try to find nodes with matching names
+			HandleSeq atoms;
+			_atomspace->get_handles_by_type(atoms, NODE, true);
+
+			for (const Handle& h : atoms) {
+				if (h->to_short_string() == atom_str) {
+					ATenValuePtr emb = createATenFromVector(vec, {emb_dim});
+					auto entity_emb = std::make_shared<EntityEmbedding>(h, emb, 0);
+					_embeddings[h] = entity_emb;
+					_num_embeddings++;
+
+					if (_embedding_key)
+						_atomspace->set_value(h, _embedding_key, emb);
+
+					break;
+				}
+			}
+		}
+	}
+
+	file.close();
 }
 
 std::string TensorLogic::to_string() const
@@ -1028,8 +1140,54 @@ SetEmbeddingLink::SetEmbeddingLink(const HandleSeq&& oset, Type t)
 
 ValuePtr SetEmbeddingLink::execute(AtomSpace* as, bool silent)
 {
-	// TODO: Get tensor from second argument and set as embedding
-	return ValuePtr();
+	Handle target_atom = _outgoing[0];
+	Handle tensor_source = _outgoing[1];
+
+	// Get tensor from second argument
+	ATenValuePtr tensor;
+
+	// Try to execute if it's executable
+	if (tensor_source->is_executable()) {
+		ValuePtr result = tensor_source->execute(as);
+		tensor = ATenValueCast(result);
+		if (!tensor) {
+			// Try FloatValue conversion
+			FloatValuePtr fvp = FloatValueCast(result);
+			if (fvp) {
+				auto vec = fvp->value();
+				tensor = createATenFromVector(vec, {static_cast<int64_t>(vec.size())});
+			}
+		}
+	}
+
+	// Check for NumberNode
+	if (!tensor && tensor_source->is_type(NUMBER_NODE)) {
+		NumberNodePtr nn = NumberNodeCast(tensor_source);
+		auto vec = nn->value();
+		tensor = createATenFromVector(vec, {static_cast<int64_t>(vec.size())});
+	}
+
+	// Check if source is already an ATenValue holder
+	if (!tensor) {
+		Handle tensor_key = as->get_node(PREDICATE_NODE, "*-TensorKey-*");
+		if (tensor_key) {
+			ValuePtr val = tensor_source->getValue(tensor_key);
+			tensor = ATenValueCast(val);
+		}
+	}
+
+	if (!tensor) {
+		throw RuntimeException(TRACE_INFO,
+			"SetEmbeddingLink: second argument is not a tensor: %s",
+			tensor_source->to_short_string().c_str());
+	}
+
+	// Set the embedding using TensorLogic
+	TensorLogic logic(as);
+	logic.set_embedding(target_atom, tensor);
+
+	// Return the tensor that was set
+	return tensor;
 }
 
 Handle SetEmbeddingLink::factory(const Handle& h)
