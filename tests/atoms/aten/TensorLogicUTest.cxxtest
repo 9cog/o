@@ -24,8 +24,10 @@
  */
 
 #include <cmath>
+#include <cstdio>
 #include <opencog/atoms/aten/ATenValue.h>
 #include <opencog/atoms/aten/TensorEquation.h>
+#include <opencog/atoms/aten/TensorLogic.h>
 #include <opencog/atoms/aten/TensorLogicLinks.h>
 #include <opencog/atoms/core/NumberNode.h>
 #include <opencog/atomspace/AtomSpace.h>
@@ -1500,5 +1502,113 @@ public:
 
 		// grandparent[0,2] = 0.9 * 0.8 = 0.72
 		TS_ASSERT_DELTA(vec[2], 0.72, 1e-10);
+	}
+
+	// ========================================
+	// TensorLogic Class Tests (new implementations)
+	// ========================================
+
+	void test_tensor_logic_save_load_embeddings()
+	{
+		// Test save and load embeddings functionality
+		TensorLogic logic(_as.get(), 64, 3, "cpu");
+
+		// Create some atoms with embeddings
+		Handle atom1 = _as->add_node(CONCEPT_NODE, "test_entity_1");
+		Handle atom2 = _as->add_node(CONCEPT_NODE, "test_entity_2");
+
+		// Set embeddings
+		ATenValuePtr emb1 = createATenFromVector(std::vector<double>(64, 1.0), {64});
+		ATenValuePtr emb2 = createATenFromVector(std::vector<double>(64, 2.0), {64});
+
+		logic.set_embedding(atom1, emb1);
+		logic.set_embedding(atom2, emb2);
+
+		// Save embeddings
+		// Note: Uses /tmp/ consistent with other tests in this project (Linux-focused)
+		std::string temp_path = "/tmp/test_embeddings.bin";
+		logic.save_embeddings(temp_path);
+
+		// Create a new logic instance and load
+		TensorLogic logic2(_as.get(), 64, 3, "cpu");
+		logic2.load_embeddings(temp_path);
+
+		// Verify embeddings were loaded (by checking if atoms have embeddings)
+		TS_ASSERT(logic2.has_embedding(atom1));
+		TS_ASSERT(logic2.has_embedding(atom2));
+
+		// Clean up temp file
+		std::remove(temp_path.c_str());
+	}
+
+	void test_tensor_logic_get_truth_tensor()
+	{
+		// Test get_truth_tensor functionality
+		TensorLogic logic(_as.get(), 64, 3, "cpu");
+
+		// Create an atom
+		Handle atom = _as->add_node(CONCEPT_NODE, "truth_test_entity");
+
+		// Get truth tensor (should create one with defaults)
+		TruthValueTensorPtr tvt = logic.get_truth_tensor(atom);
+
+		TS_ASSERT(tvt != nullptr);
+		TS_ASSERT(tvt->strength() != nullptr);
+		TS_ASSERT(tvt->confidence() != nullptr);
+
+		// Default strength should be 0.5
+		TS_ASSERT_DELTA(tvt->mean_strength(), 0.5, 1e-10);
+		// Default confidence should be 0.0
+		TS_ASSERT_DELTA(tvt->mean_confidence(), 0.0, 1e-10);
+	}
+
+	void test_tensor_logic_backpropagate()
+	{
+		// Test backpropagation functionality
+		TensorLogic logic(_as.get(), 64, 3, "cpu");
+
+		// Build network tensor first (needed for backprop)
+		Handle atom1 = _as->add_node(CONCEPT_NODE, "bp_entity_1");
+		Handle atom2 = _as->add_node(CONCEPT_NODE, "bp_entity_2");
+
+		// Set initial embeddings
+		ATenValuePtr emb1 = createATenFromVector(std::vector<double>(64, 1.0), {64});
+		ATenValuePtr emb2 = createATenFromVector(std::vector<double>(64, 0.5), {64});
+
+		logic.set_embedding(atom1, emb1);
+		logic.set_embedding(atom2, emb2);
+
+		// Get initial update count
+		size_t initial_count = logic.update_count();
+
+		// Create a loss tensor and backpropagate
+		ATenValuePtr loss = createATenFromVector({0.5}, {1});
+		logic.backpropagate(loss);
+
+		// Verify update count increased
+		TS_ASSERT(logic.update_count() > initial_count);
+	}
+
+	void test_set_embedding_link_execute()
+	{
+		// Test SetEmbeddingLink execute functionality
+		Handle target = _as->add_node(CONCEPT_NODE, "embedding_target");
+		Handle tensor_source = _as->add_node(NUMBER_NODE, "1 2 3 4 5");
+
+		Handle set_link = _as->add_link(SET_EMBEDDING_LINK, target, tensor_source);
+
+		// Execute should set the embedding
+		ValuePtr result = set_link->execute(_as.get());
+
+		// Result should be the tensor
+		TS_ASSERT(result != nullptr);
+		ATenValuePtr tensor = ATenValueCast(result);
+		TS_ASSERT(tensor != nullptr);
+
+		// Verify the tensor values
+		auto vec = tensor->to_vector();
+		TS_ASSERT_EQUALS(vec.size(), 5);
+		TS_ASSERT_DELTA(vec[0], 1.0, 1e-10);
+		TS_ASSERT_DELTA(vec[4], 5.0, 1e-10);
 	}
 };
