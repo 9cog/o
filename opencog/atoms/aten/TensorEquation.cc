@@ -605,6 +605,15 @@ ATenValuePtr TensorEquation::execute(
 	{
 		result = apply_nonlinearity(result, Nonlinearity::THRESHOLD);
 	}
+	// For Hybrid mode: apply sigmoid to squash to [0,1] if no nonlinearity
+	// is set, then threshold to produce binary output.  The straight-through
+	// estimator in backward() allows gradients to flow through the threshold.
+	else if (_mode == ReasoningMode::HYBRID)
+	{
+		if (_nonlinearity == Nonlinearity::NONE)
+			result = apply_nonlinearity(result, Nonlinearity::SIGMOID);
+		result = apply_nonlinearity(result, Nonlinearity::THRESHOLD);
+	}
 
 	return result;
 }
@@ -863,6 +872,7 @@ TensorProgram::TensorProgram(const std::string& name, ReasoningMode mode)
 	  _convergence_threshold(1e-6),
 	  _learning_rate(0.01),
 	  _track_gradients(false),
+	  _grad_clip(0.0),
 	  _forward_count(0),
 	  _backward_count(0)
 {
@@ -1181,6 +1191,21 @@ void TensorProgram::backward(const std::string& output_name,
 	}
 }
 
+// Clip gradient vector in-place so its L2-norm does not exceed max_norm.
+// No-op when max_norm <= 0.
+static void clip_gradient_vector(std::vector<double>& g_vec, double max_norm)
+{
+	if (max_norm <= 0.0) return;
+	double norm = 0.0;
+	for (double v : g_vec) norm += v * v;
+	norm = std::sqrt(norm);
+	if (norm > max_norm)
+	{
+		double scale = max_norm / norm;
+		for (double& v : g_vec) v *= scale;
+	}
+}
+
 void TensorProgram::update_parameters()
 {
 	for (auto& eq : _equations)
@@ -1194,6 +1219,8 @@ void TensorProgram::update_parameters()
 			auto g_vec = eq->weight_grad()->to_vector();
 			auto w_shape = eq->weight()->shape();
 
+			clip_gradient_vector(g_vec, _grad_clip);
+
 			for (size_t i = 0; i < w_vec.size() && i < g_vec.size(); i++)
 				w_vec[i] -= _learning_rate * g_vec[i];
 
@@ -1206,6 +1233,8 @@ void TensorProgram::update_parameters()
 			auto b_vec = eq->bias()->to_vector();
 			auto g_vec = eq->bias_grad()->to_vector();
 			auto b_shape = eq->bias()->shape();
+
+			clip_gradient_vector(g_vec, _grad_clip);
 
 			for (size_t i = 0; i < b_vec.size() && i < g_vec.size(); i++)
 				b_vec[i] -= _learning_rate * g_vec[i];
@@ -1227,6 +1256,7 @@ double TensorProgram::train(
 	size_t epochs)
 {
 	double final_loss = 0.0;
+	_loss_history.clear();
 
 	for (size_t epoch = 0; epoch < epochs; epoch++)
 	{
@@ -1237,12 +1267,17 @@ double TensorProgram::train(
 		// Forward pass
 		forward_to_fixpoint();
 
-		// Compute loss
+		// Compute loss with current (pre-update) parameters and record it.
+		// Recording before update follows standard ML convention: the logged
+		// value is the loss the model had entering this epoch.
 		final_loss = 0.0;
 		for (const auto& [name, target] : targets)
 		{
 			final_loss += compute_loss(name, target);
 		}
+
+		// Record loss for this epoch
+		_loss_history.push_back(final_loss);
 
 		// Backward pass (simplified)
 		for (const auto& [name, target] : targets)
