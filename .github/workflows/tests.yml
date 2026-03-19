@@ -31,7 +31,8 @@ jobs:
             cython3 \
             python3-pytest \
             libssl-dev \
-            librocksdb-dev
+            librocksdb-dev \
+            libasio-dev
 
       - name: Configure CMake
         run: |
