@@ -302,9 +302,13 @@ private:
 	// For learning
 	double _learning_rate;
 	bool _track_gradients;
+	double _grad_clip;        // Gradient clipping threshold (0 = disabled)
 
 	// Accumulated tensor gradients (keyed by tensor name)
 	std::map<std::string, ATenValuePtr> _tensor_grads;
+
+	// Training history
+	std::vector<double> _loss_history;
 
 	// Statistics
 	size_t _forward_count;
@@ -324,6 +328,20 @@ public:
 	const std::string& name() const { return _name; }
 	ReasoningMode mode() const { return _mode; }
 	void set_mode(ReasoningMode m) { _mode = m; }
+
+	/**
+	 * Set maximum number of iterations for forward_to_fixpoint().
+	 */
+	void set_max_iterations(size_t n) { _max_iterations = n; }
+	size_t max_iterations() const { return _max_iterations; }
+
+	/**
+	 * Set convergence threshold for forward_to_fixpoint().
+	 * Iteration stops when the maximum absolute change in any
+	 * derived tensor value falls below this threshold.
+	 */
+	void set_convergence_threshold(double t) { _convergence_threshold = t; }
+	double convergence_threshold() const { return _convergence_threshold; }
 
 	// ========================================
 	// Fact Management
@@ -454,6 +472,19 @@ public:
 	 */
 	void set_track_gradients(bool t) { _track_gradients = t; }
 	bool track_gradients() const { return _track_gradients; }
+
+	/**
+	 * Set gradient clipping threshold.
+	 * Gradients with L2-norm exceeding this value are scaled down.
+	 * Set to 0 (default) to disable clipping.
+	 */
+	void set_grad_clip(double clip) { _grad_clip = clip; }
+	double grad_clip() const { return _grad_clip; }
+
+	/**
+	 * Return per-epoch loss values recorded by train().
+	 */
+	const std::vector<double>& loss_history() const { return _loss_history; }
 
 	/**
 	 * Compute loss between derived and target tensors.

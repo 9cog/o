@@ -1872,4 +1872,230 @@ public:
 		// Loss should have decreased
 		TS_ASSERT(final_loss < loss_before);
 	}
+
+	// ========================================
+	// TensorProgram configuration accessors
+	// ========================================
+
+	void test_tensor_program_max_iterations()
+	{
+		// Verify set_max_iterations / max_iterations round-trip
+		TensorProgram prog("iter_test");
+		TS_ASSERT_EQUALS(prog.max_iterations(), 100);  // default
+
+		prog.set_max_iterations(42);
+		TS_ASSERT_EQUALS(prog.max_iterations(), 42);
+
+		// A program that doesn't converge should stop at max_iterations
+		ATenValuePtr v = createATenFromVector({0.0, 1.0}, {2});
+		prog.add_fact("in", v);
+		// Two equations that alternate: each overwrites the other's output
+		prog.add_equation("eq1", "out1", {"in"}, "i->i");
+		prog.add_equation("eq2", "out2", {"out1"}, "i->i");
+
+		prog.forward_to_fixpoint();
+
+		// Should have stopped: forward_count <= max_iterations + 1
+		TS_ASSERT(prog.forward_count() <= 43);
+	}
+
+	void test_tensor_program_convergence_threshold()
+	{
+		// Verify set_convergence_threshold / convergence_threshold
+		TensorProgram prog("conv_test");
+		TS_ASSERT_DELTA(prog.convergence_threshold(), 1e-6, 1e-15);
+
+		prog.set_convergence_threshold(0.1);
+		TS_ASSERT_DELTA(prog.convergence_threshold(), 0.1, 1e-15);
+
+		// A quickly-converging program should stop early
+		ATenValuePtr stable = createATenFromVector({1.0, 1.0}, {2});
+		prog.add_fact("in", stable);
+		prog.add_equation("eq1", "out", {"in"}, "i->i");
+
+		prog.forward_to_fixpoint();
+
+		// With a loose threshold the fixpoint should be reached quickly
+		TS_ASSERT(prog.forward_count() <= 3);
+	}
+
+	void test_tensor_program_grad_clip_accessors()
+	{
+		// Verify set_grad_clip / grad_clip round-trip
+		TensorProgram prog("clip_test");
+		TS_ASSERT_DELTA(prog.grad_clip(), 0.0, 1e-15);  // disabled by default
+
+		prog.set_grad_clip(1.0);
+		TS_ASSERT_DELTA(prog.grad_clip(), 1.0, 1e-15);
+
+		prog.set_grad_clip(0.0);
+		TS_ASSERT_DELTA(prog.grad_clip(), 0.0, 1e-15);
+	}
+
+	void test_tensor_program_grad_clip_limits_update()
+	{
+		// Verify that gradient clipping prevents weight from diverging when
+		// gradients would otherwise be very large.
+		TensorProgram prog("clip_limits");
+		prog.set_learning_rate(1.0);   // large lr → large updates without clipping
+		prog.set_grad_clip(0.01);      // restrict gradient norm to 0.01
+
+		// Large input: gradient will be large without clipping
+		ATenValuePtr in = createATenFromVector({100.0, 100.0, 100.0}, {3});
+		ATenValuePtr target = createATenFromVector({0.0, 0.0, 0.0}, {3});
+		prog.add_fact("in", in);
+		prog.add_equation("eq1", "out", {"in"}, "i->i");
+
+		TensorEquationPtr eq = prog.get_equation("eq1");
+		eq->set_learnable(true);
+		ATenValuePtr init_w = createATenFromVector({1.0, 1.0, 1.0}, {3});
+		eq->set_weight(init_w);
+
+		prog.forward();
+		ATenValuePtr grad_out = ATenValueCast(prog.get_derived("out")->sub(*target));
+		prog.backward("out", grad_out);
+
+		auto w_before = eq->weight()->to_vector();
+		prog.update_parameters();
+		auto w_after = eq->weight()->to_vector();
+
+		// Each weight change should be <= lr * clip = 1.0 * 0.01 = 0.01.
+		// A small margin of 1e-9 covers floating-point rounding in the
+		// L2-norm computation and the subsequent rescaling.
+		const double max_expected_delta = 0.01 + 1e-9;
+		for (size_t i = 0; i < w_before.size(); i++)
+		{
+			double delta = std::abs(w_before[i] - w_after[i]);
+			TS_ASSERT(delta <= max_expected_delta);
+		}
+	}
+
+	void test_tensor_program_loss_history()
+	{
+		// Verify that train() records per-epoch losses
+		TensorProgram prog("hist_test");
+		prog.set_learning_rate(0.01);
+
+		ATenValuePtr in = createATenFromVector({1.0, 2.0, 3.0}, {3});
+		ATenValuePtr target = createATenFromVector({2.0, 4.0, 6.0}, {3});
+		prog.add_fact("in", in);
+		prog.add_equation("eq1", "out", {"in"}, "i->i");
+
+		TensorEquationPtr eq = prog.get_equation("eq1");
+		eq->set_learnable(true);
+		eq->set_weight(createATenFromVector({0.5, 0.5, 0.5}, {3}));
+
+		TS_ASSERT_EQUALS(prog.loss_history().size(), 0);
+
+		std::map<std::string, ATenValuePtr> targets_map = {{"out", target}};
+		prog.train({}, targets_map, 10);
+
+		// Should have exactly one loss entry per epoch
+		TS_ASSERT_EQUALS(prog.loss_history().size(), 10);
+
+		// Loss entries should all be non-negative
+		for (double loss : prog.loss_history())
+			TS_ASSERT(loss >= 0.0);
+	}
+
+	void test_tensor_program_loss_history_decreasing()
+	{
+		// Loss should generally decrease over training epochs
+		TensorProgram prog("hist_decr");
+		prog.set_learning_rate(0.01);
+
+		ATenValuePtr in = createATenFromVector({1.0, 2.0, 3.0}, {3});
+		ATenValuePtr target = createATenFromVector({2.0, 4.0, 6.0}, {3});
+		prog.add_fact("in", in);
+		prog.add_equation("eq1", "out", {"in"}, "i->i");
+
+		TensorEquationPtr eq = prog.get_equation("eq1");
+		eq->set_learnable(true);
+		eq->set_weight(createATenFromVector({0.5, 0.5, 0.5}, {3}));
+
+		std::map<std::string, ATenValuePtr> targets_map = {{"out", target}};
+		prog.train({}, targets_map, 30);
+
+		const auto& hist = prog.loss_history();
+		TS_ASSERT(!hist.empty());
+		// Last loss should be less than the first
+		TS_ASSERT(hist.back() < hist.front());
+	}
+
+	// ========================================
+	// HYBRID reasoning mode
+	// ========================================
+
+	void test_hybrid_mode_output_binary()
+	{
+		// HYBRID mode should produce binary {0,1} outputs like BOOLEAN mode
+		TensorEquation eq("hyb_eq", "out", {"in"},
+		                  "i->i", Nonlinearity::NONE, ReasoningMode::HYBRID);
+
+		// Inputs with values spread around 0 (before sigmoid)
+		ATenValuePtr in = createATenFromVector({2.0, -2.0, 0.5, -0.5}, {4});
+		ATenValuePtr out = eq.execute({in});
+
+		auto data = out->to_vector();
+		for (double v : data)
+		{
+			// Each value must be exactly 0 or 1
+			TS_ASSERT(v == 0.0 || v == 1.0);
+		}
+	}
+
+	void test_hybrid_mode_sigmoid_then_threshold()
+	{
+		// For HYBRID + NONE nonlinearity: sigmoid is applied before threshold.
+		// sigmoid(2.0) ≈ 0.88 → threshold → 1
+		// sigmoid(-2.0) ≈ 0.12 → threshold → 0
+		TensorEquation eq("hyb_sig", "out", {"in"},
+		                  "i->i", Nonlinearity::NONE, ReasoningMode::HYBRID);
+
+		ATenValuePtr in = createATenFromVector({2.0, -2.0}, {2});
+		ATenValuePtr out = eq.execute({in});
+
+		auto data = out->to_vector();
+		TS_ASSERT_EQUALS(data.size(), 2);
+		TS_ASSERT_DELTA(data[0], 1.0, 1e-10);  // sigmoid(2) > 0.5 → 1
+		TS_ASSERT_DELTA(data[1], 0.0, 1e-10);  // sigmoid(-2) < 0.5 → 0
+	}
+
+	void test_hybrid_mode_explicit_nonlinearity()
+	{
+		// HYBRID with an explicit nonlinearity (e.g. RELU) skips the extra
+		// sigmoid and applies threshold directly to the RELU output.
+		// relu(1.0)=1.0 → threshold → 1; relu(-1.0)=0.0 → threshold → 0
+		TensorEquation eq("hyb_relu", "out", {"in"},
+		                  "i->i", Nonlinearity::RELU, ReasoningMode::HYBRID);
+
+		ATenValuePtr in = createATenFromVector({1.0, -1.0}, {2});
+		ATenValuePtr out = eq.execute({in});
+
+		auto data = out->to_vector();
+		TS_ASSERT_EQUALS(data.size(), 2);
+		TS_ASSERT_DELTA(data[0], 1.0, 1e-10);  // relu(1) = 1 > 0.5 → 1
+		TS_ASSERT_DELTA(data[1], 0.0, 1e-10);  // relu(-1) = 0 ≤ 0.5 → 0
+	}
+
+	void test_hybrid_mode_vs_boolean()
+	{
+		// For inputs that produce the same post-sigmoid values as direct
+		// threshold in BOOLEAN mode, both modes should give the same result
+		// when the pre-activation is already in [0,1].
+		ATenValuePtr in = createATenFromVector({0.9, 0.1}, {2});
+
+		TensorEquation bool_eq("bool_eq", "out", {"in"},
+		                       "i->i", Nonlinearity::NONE, ReasoningMode::BOOLEAN);
+		TensorEquation hyb_eq("hyb_eq", "out", {"in"},
+		                      "i->i", Nonlinearity::NONE, ReasoningMode::HYBRID);
+
+		// Both should give binary output; the actual values may differ because
+		// HYBRID routes through sigmoid first. Just verify both are binary.
+		auto bool_out = bool_eq.execute({in})->to_vector();
+		auto hyb_out = hyb_eq.execute({in})->to_vector();
+
+		for (double v : bool_out) TS_ASSERT(v == 0.0 || v == 1.0);
+		for (double v : hyb_out)  TS_ASSERT(v == 0.0 || v == 1.0);
+	}
 };
