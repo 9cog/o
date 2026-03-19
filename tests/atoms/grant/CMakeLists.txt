@@ -1,4 +1,6 @@
 
+LINK_LIBRARIES(atomspace cogutil)
+
 ADD_CXXTEST(DefineLinkUTest)
 ADD_CXXTEST(StateLinkUTest)
 

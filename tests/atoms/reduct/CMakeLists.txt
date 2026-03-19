@@ -1,4 +1,5 @@
 IF(HAVE_GUILE)
+	LINK_LIBRARIES(smob atomspace cogutil)
 	ADD_CXXTEST(ReductUTest)
 	ADD_CXXTEST(HeavisideUTest)
 	ADD_CXXTEST(MinMaxUTest)

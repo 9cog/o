@@ -1,4 +1,6 @@
 
+LINK_LIBRARIES(atomspace cogutil)
+
 ADD_CXXTEST(EqualLinkUTest)
 ADD_CXXTEST(IdenticalLinkUTest)
 ADD_CXXTEST(ExclusiveLinkUTest)
