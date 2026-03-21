@@ -52,6 +52,7 @@ ADD_LIBRARY (json-shell SHARED
 )
 
 TARGET_LINK_LIBRARIES(json-shell
+	json
 	${ATOMSPACE_STORAGE_LIBRARIES}
 )
 

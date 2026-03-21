@@ -6,7 +6,7 @@
 (define-module (opencog cogserver))
 
 (use-modules (opencog))
-(use-modules (opencog cs-config))
+(use-modules (opencog as-config))
 
 (load-extension
 	(string-append opencog-ext-path-servernode "libservernode")
