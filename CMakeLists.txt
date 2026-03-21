@@ -88,6 +88,16 @@ ELSE (ROCKSDB_FOUND)
 	MESSAGE(STATUS "RocksDB not found - RocksDB storage backend disabled.")
 ENDIF (ROCKSDB_FOUND)
 
+# OpenSSL (optional - for WebSocket TLS support)
+FIND_PACKAGE(OpenSSL)
+IF (OPENSSL_FOUND)
+	MESSAGE(STATUS "OpenSSL found - enabling WebSocket TLS support.")
+	ADD_DEFINITIONS(-DHAVE_OPENSSL)
+	SET(HAVE_OPENSSL 1)
+ELSE (OPENSSL_FOUND)
+	MESSAGE(STATUS "OpenSSL not found - WebSocket TLS support disabled.")
+ENDIF (OPENSSL_FOUND)
+
 # ============================================================
 # Build subdirectories
 # ============================================================

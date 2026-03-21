@@ -159,7 +159,7 @@ public:
 	void test_Quotation_to_string()
 	{
 		Quotation q(2, true);
-		std::string s = q.to_string();
+		std::string s = q.to_string("");
 		TS_ASSERT(s.find("level = 2") != std::string::npos);
 		TS_ASSERT(s.find("local = 1") != std::string::npos);
 	}
@@ -185,13 +185,13 @@ public:
 	{
 		Context ctx;
 		Handle var = createNode(VARIABLE_NODE, "$x");
-		Handle concept = createNode(CONCEPT_NODE, "foo");
+		Handle concept_node = createNode(CONCEPT_NODE, "foo");
 
 		// Variable should be recognized as free
 		TS_ASSERT(ctx.is_free_variable(var));
 
 		// ConceptNode should not be a free variable
-		TS_ASSERT(!ctx.is_free_variable(concept));
+		TS_ASSERT(!ctx.is_free_variable(concept_node));
 	}
 
 	void test_Context_is_free_variable_quoted()
@@ -237,7 +237,7 @@ public:
 	{
 		Handle a = createNode(CONCEPT_NODE, "a");
 		Handle b = createNode(CONCEPT_NODE, "b");
-		Handle list = createLink({a, b}, LIST_LINK);
+		Handle list = createLink(HandleSeq{a, b}, LIST_LINK);
 
 		TS_ASSERT(is_atom_in_tree(list, a));
 		TS_ASSERT(is_atom_in_tree(list, b));
@@ -249,8 +249,8 @@ public:
 		Handle a = createNode(CONCEPT_NODE, "a");
 		Handle b = createNode(CONCEPT_NODE, "b");
 		Handle c = createNode(CONCEPT_NODE, "c");
-		Handle inner = createLink({a, b}, LIST_LINK);
-		Handle outer = createLink({inner, c}, LIST_LINK);
+		Handle inner = createLink(HandleSeq{a, b}, LIST_LINK);
+		Handle outer = createLink(HandleSeq{inner, c}, LIST_LINK);
 
 		TS_ASSERT(is_atom_in_tree(outer, a));
 		TS_ASSERT(is_atom_in_tree(outer, b));
@@ -263,7 +263,7 @@ public:
 		Handle a = createNode(CONCEPT_NODE, "a");
 		Handle b = createNode(CONCEPT_NODE, "b");
 		Handle c = createNode(CONCEPT_NODE, "c");
-		Handle list = createLink({a, b}, LIST_LINK);
+		Handle list = createLink(HandleSeq{a, b}, LIST_LINK);
 
 		TS_ASSERT(!is_atom_in_tree(list, c));
 	}
@@ -272,8 +272,8 @@ public:
 	{
 		Handle a = createNode(CONCEPT_NODE, "a");
 		Handle var = createNode(VARIABLE_NODE, "$x");
-		Handle list_closed = createLink({a}, LIST_LINK);
-		Handle list_open = createLink({a, var}, LIST_LINK);
+		Handle list_closed = createLink(HandleSeq{a}, LIST_LINK);
+		Handle list_open = createLink(HandleSeq{a, var}, LIST_LINK);
 
 		TS_ASSERT(is_closed(a));
 		TS_ASSERT(!is_closed(var));
@@ -301,7 +301,7 @@ public:
 		Handle var1 = createNode(VARIABLE_NODE, "$x");
 		Handle var2 = createNode(VARIABLE_NODE, "$y");
 		Handle a = createNode(CONCEPT_NODE, "a");
-		Handle list = createLink({var1, a, var2}, LIST_LINK);
+		Handle list = createLink(HandleSeq{var1, a, var2}, LIST_LINK);
 
 		HandleSet fv = get_free_variables(list);
 		TS_ASSERT_EQUALS(fv.size(), 2);
@@ -322,7 +322,7 @@ public:
 		Handle a = createNode(CONCEPT_NODE, "a");
 		Handle b = createNode(CONCEPT_NODE, "b");
 		Handle c = createNode(CONCEPT_NODE, "c");
-		Handle list = createLink({a, b}, LIST_LINK);
+		Handle list = createLink(HandleSeq{a, b}, LIST_LINK);
 
 		HandleSet atoms1 = {a, c};
 		HandleSet atoms2 = {c};
@@ -335,7 +335,7 @@ public:
 	{
 		Handle a = createNode(CONCEPT_NODE, "a");
 		Handle var = createNode(VARIABLE_NODE, "$x");
-		Handle list = createLink({a, var}, LIST_LINK);
+		Handle list = createLink(HandleSeq{a, var}, LIST_LINK);
 
 		TS_ASSERT(contains_atomtype(list, VARIABLE_NODE));
 		TS_ASSERT(contains_atomtype(list, CONCEPT_NODE));
@@ -347,7 +347,7 @@ public:
 		Handle var1 = createNode(VARIABLE_NODE, "$x");
 		Handle var2 = createNode(VARIABLE_NODE, "$y");
 		Handle a = createNode(CONCEPT_NODE, "a");
-		Handle list = createLink({var1, a, var2}, LIST_LINK);
+		Handle list = createLink(HandleSeq{var1, a, var2}, LIST_LINK);
 
 		TS_ASSERT_EQUALS(contains_atomtype_count(list, VARIABLE_NODE), 2);
 		TS_ASSERT_EQUALS(contains_atomtype_count(list, CONCEPT_NODE), 1);
@@ -358,7 +358,7 @@ public:
 	{
 		Handle a = createNode(CONCEPT_NODE, "a");
 		Handle b = createNode(CONCEPT_NODE, "b");
-		Handle list = createLink({a, b}, LIST_LINK);
+		Handle list = createLink(HandleSeq{a, b}, LIST_LINK);
 
 		HandleSet all = get_all_uniq_atoms(list);
 		TS_ASSERT_EQUALS(all.size(), 3); // a, b, and list itself
@@ -371,8 +371,8 @@ public:
 	{
 		Handle a = createNode(CONCEPT_NODE, "a");
 		Handle b = createNode(CONCEPT_NODE, "b");
-		Handle inner = createLink({a}, LIST_LINK);
-		Handle outer = createLink({inner, b}, LIST_LINK);
+		Handle inner = createLink(HandleSeq{a}, LIST_LINK);
+		Handle outer = createLink(HandleSeq{inner, b}, LIST_LINK);
 
 		HandleSet all = get_all_uniq_atoms(outer);
 		TS_ASSERT_EQUALS(all.size(), 4);
@@ -387,7 +387,7 @@ public:
 		Handle var1 = createNode(VARIABLE_NODE, "$x");
 		Handle var2 = createNode(VARIABLE_NODE, "$y");
 		Handle a = createNode(CONCEPT_NODE, "a");
-		Handle list = createLink({var1, a, var2}, LIST_LINK);
+		Handle list = createLink(HandleSeq{var1, a, var2}, LIST_LINK);
 
 		HandleSet vars = {var1, var2};
 		TS_ASSERT_EQUALS(num_unquoted_unscoped_in_tree(list, vars), 2);
@@ -409,7 +409,7 @@ public:
 		Handle var1 = createNode(VARIABLE_NODE, "$x");
 		Handle var2 = createNode(VARIABLE_NODE, "$y");
 		Handle a = createNode(CONCEPT_NODE, "a");
-		Handle list = createLink({var1, a, var2}, LIST_LINK);
+		Handle list = createLink(HandleSeq{var1, a, var2}, LIST_LINK);
 
 		FindAtoms fa(VARIABLE_NODE, false);
 		fa.search_set(list);
@@ -423,7 +423,7 @@ public:
 	{
 		Handle a = createNode(CONCEPT_NODE, "a");
 		Handle b = createNode(CONCEPT_NODE, "b");
-		Handle list = createLink({a, b}, LIST_LINK);
+		Handle list = createLink(HandleSeq{a, b}, LIST_LINK);
 
 		FindAtoms fa(a);
 		fa.search_set(list);
@@ -436,8 +436,8 @@ public:
 	{
 		Handle var = createNode(VARIABLE_NODE, "$x");
 		Handle a = createNode(CONCEPT_NODE, "a");
-		Handle inner = createLink({var, a}, LIST_LINK);
-		Handle outer = createLink({inner}, LIST_LINK);
+		Handle inner = createLink(HandleSeq{var, a}, LIST_LINK);
+		Handle outer = createLink(HandleSeq{inner}, LIST_LINK);
 
 		FindAtoms fa(VARIABLE_NODE, false);
 		fa.search_set(outer);
@@ -454,7 +454,7 @@ public:
 	{
 		Handle var = createNode(VARIABLE_NODE, "$x");
 		Handle a = createNode(CONCEPT_NODE, "a");
-		Handle list = createLink({var, a}, LIST_LINK);
+		Handle list = createLink(HandleSeq{var, a}, LIST_LINK);
 
 		FreeVariables fv;
 		fv.find_variables(list);
@@ -468,7 +468,7 @@ public:
 		Handle var1 = createNode(VARIABLE_NODE, "$x");
 		Handle var2 = createNode(VARIABLE_NODE, "$y");
 		Handle a = createNode(CONCEPT_NODE, "a");
-		Handle list = createLink({var1, a, var2}, LIST_LINK);
+		Handle list = createLink(HandleSeq{var1, a, var2}, LIST_LINK);
 
 		FreeVariables fv;
 		fv.find_variables(list);
@@ -563,7 +563,7 @@ public:
 	void test_unquoted_below_with_unquote()
 	{
 		Handle a = createNode(CONCEPT_NODE, "a");
-		Handle unquote = createLink({a}, UNQUOTE_LINK);
+		Handle unquote = createLink(HandleSeq{a}, UNQUOTE_LINK);
 
 		TS_ASSERT(unquoted_below(unquote));
 	}
@@ -571,8 +571,8 @@ public:
 	void test_unquoted_below_balanced()
 	{
 		Handle a = createNode(CONCEPT_NODE, "a");
-		Handle unquote = createLink({a}, UNQUOTE_LINK);
-		Handle quote = createLink({unquote}, QUOTE_LINK);
+		Handle unquote = createLink(HandleSeq{a}, UNQUOTE_LINK);
+		Handle quote = createLink(HandleSeq{unquote}, QUOTE_LINK);
 
 		// Quote balances out unquote
 		TS_ASSERT(!unquoted_below(quote));
@@ -582,7 +582,7 @@ public:
 	{
 		Handle a = createNode(CONCEPT_NODE, "a");
 		Handle b = createNode(CONCEPT_NODE, "b");
-		Handle unquote = createLink({a}, UNQUOTE_LINK);
+		Handle unquote = createLink(HandleSeq{a}, UNQUOTE_LINK);
 
 		HandleSeq hs1 = {a, b};
 		HandleSeq hs2 = {a, unquote};
@@ -596,7 +596,7 @@ public:
 	void test_QuoteLink_create()
 	{
 		Handle a = createNode(CONCEPT_NODE, "a");
-		Handle quote = createLink({a}, QUOTE_LINK);
+		Handle quote = createLink(HandleSeq{a}, QUOTE_LINK);
 
 		TS_ASSERT(quote->get_type() == QUOTE_LINK);
 		TS_ASSERT_EQUALS(quote->get_arity(), 1);
@@ -605,7 +605,7 @@ public:
 	void test_UnquoteLink_create()
 	{
 		Handle a = createNode(CONCEPT_NODE, "a");
-		Handle unquote = createLink({a}, UNQUOTE_LINK);
+		Handle unquote = createLink(HandleSeq{a}, UNQUOTE_LINK);
 
 		TS_ASSERT(unquote->get_type() == UNQUOTE_LINK);
 		TS_ASSERT_EQUALS(unquote->get_arity(), 1);
@@ -614,7 +614,7 @@ public:
 	void test_LocalQuoteLink_create()
 	{
 		Handle a = createNode(CONCEPT_NODE, "a");
-		Handle local_quote = createLink({a}, LOCAL_QUOTE_LINK);
+		Handle local_quote = createLink(HandleSeq{a}, LOCAL_QUOTE_LINK);
 
 		TS_ASSERT(local_quote->get_type() == LOCAL_QUOTE_LINK);
 		TS_ASSERT_EQUALS(local_quote->get_arity(), 1);
@@ -632,10 +632,10 @@ public:
 	void test_deeply_nested_free_variables()
 	{
 		Handle var = createNode(VARIABLE_NODE, "$x");
-		Handle l1 = createLink({var}, LIST_LINK);
-		Handle l2 = createLink({l1}, LIST_LINK);
-		Handle l3 = createLink({l2}, LIST_LINK);
-		Handle l4 = createLink({l3}, LIST_LINK);
+		Handle l1 = createLink(HandleSeq{var}, LIST_LINK);
+		Handle l2 = createLink(HandleSeq{l1}, LIST_LINK);
+		Handle l3 = createLink(HandleSeq{l2}, LIST_LINK);
+		Handle l4 = createLink(HandleSeq{l3}, LIST_LINK);
 
 		HandleSet fv = get_free_variables(l4);
 		TS_ASSERT_EQUALS(fv.size(), 1);
@@ -645,7 +645,7 @@ public:
 	void test_duplicate_variables()
 	{
 		Handle var = createNode(VARIABLE_NODE, "$x");
-		Handle list = createLink({var, var, var}, LIST_LINK);
+		Handle list = createLink(HandleSeq{var, var, var}, LIST_LINK);
 
 		HandleSet fv = get_free_variables(list);
 		TS_ASSERT_EQUALS(fv.size(), 1); // Duplicates should be deduplicated

@@ -11,6 +11,7 @@ ADD_LIBRARY (network SHARED
 
 TARGET_LINK_LIBRARIES(network
 	${COGUTIL_LIBRARY}
+	${OPENSSL_LIBRARIES}
 )
 
 # The EXPORT is needed to autogenerate CMake boilerplate files in the

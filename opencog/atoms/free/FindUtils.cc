@@ -410,7 +410,7 @@ size_t contains_atomtype_count(const Handle& clause, Type atom_type,
 
 	quotation.update(clause_type);
 
-	if (not clause->is_link()) return 0;
+	if (not clause->is_link()) return cnt;
 
 	for (const Handle& subclause: clause->getOutgoingSet())
 	{

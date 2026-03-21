@@ -1,5 +1,5 @@
 
-LINK_LIBRARIES(atomspace cogutil)
+LINK_LIBRARIES(atomspace cogutil smob)
 
 ADD_CXXTEST(DefinedSchemaUTest)
 
