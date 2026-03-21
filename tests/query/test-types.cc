@@ -8,7 +8,6 @@ DEFINED_LINGUISTIC_RELATIONSHIP_NODE = nameserver().declType(NODE, "DefinedLingu
 DOCUMENT_NODE = nameserver().declType(NODE, "DocumentNode");
 FEATURE_LINK = nameserver().declType(LINK, "FeatureLink");
 FEATURE_NODE = nameserver().declType(NODE, "FeatureNode");
-HEBBIAN_LINK = nameserver().declType(LINK, "HebbianLink");
 LEMMA_LINK = nameserver().declType(LINK, "LemmaLink");
 LEMMA_NODE = nameserver().declType(NODE, "LemmaNode");
 LG_CONNECTOR_NODE = nameserver().declType(NODE, "LgConnectorNode");

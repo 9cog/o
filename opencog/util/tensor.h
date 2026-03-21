@@ -427,7 +427,7 @@ public:
     Tensor t() const
     {
         OC_ASSERT(_shape.size() == 2, "Tensor::t: only 2D tensors supported");
-        Tensor result({_shape[1], _shape[0]});
+        Tensor result(shape_type{_shape[1], _shape[0]});
         for (size_t i = 0; i < _shape[0]; ++i) {
             for (size_t j = 0; j < _shape[1]; ++j) {
                 result.at({j, i}) = at({i, j});
@@ -1013,7 +1013,7 @@ public:
     {
         OC_ASSERT(_shape.size() == 2, "Tensor::diag: tensor must be 2D");
         size_t min_dim = std::min(_shape[0], _shape[1]);
-        Tensor result({min_dim});
+        Tensor result(shape_type{min_dim});
         for (size_t i = 0; i < min_dim; ++i) {
             result.at({i}) = at({i, i});
         }

@@ -10,6 +10,8 @@ LINK_DIRECTORIES (
 	${PROJECT_BINARY_DIR}/opencog/util
 )
 
+LINK_LIBRARIES(query-engine atomspace cogutil)
+
 # We want to run the tests in the order below;
 # Each test gets progressively more complex, and exercises
 # features that the later tests depend on.

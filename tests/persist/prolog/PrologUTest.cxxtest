@@ -238,8 +238,8 @@ public:
 		Handle pred = createNode(PREDICATE_NODE, "likes");
 		Handle john = createNode(CONCEPT_NODE, "john");
 		Handle mary = createNode(CONCEPT_NODE, "mary");
-		Handle args = createLink({john, mary}, LIST_LINK);
-		Handle eval = createLink({pred, args}, EVALUATION_LINK);
+		Handle args = createLink(HandleSeq{john, mary}, LIST_LINK);
+		Handle eval = createLink(HandleSeq{pred, args}, EVALUATION_LINK);
 
 		std::string result = Prolog::prt_datalog(eval, false);
 
@@ -253,8 +253,8 @@ public:
 	{
 		Handle pred = createNode(PREDICATE_NODE, "foo");
 		Handle bar = createNode(CONCEPT_NODE, "bar");
-		Handle args = createLink({bar}, LIST_LINK);
-		Handle eval = createLink({pred, args}, EVALUATION_LINK);
+		Handle args = createLink(HandleSeq{bar}, LIST_LINK);
+		Handle eval = createLink(HandleSeq{pred, args}, EVALUATION_LINK);
 
 		// Recursive mode (true) should not add period
 		std::string result = Prolog::prt_datalog(eval, true);
@@ -271,14 +271,14 @@ public:
 		Handle child_pred = createNode(PREDICATE_NODE, "child");
 		Handle x = createNode(VARIABLE_NODE, "X");
 		Handle y = createNode(VARIABLE_NODE, "Y");
-		Handle child_args = createLink({x, y}, LIST_LINK);
-		Handle child_eval = createLink({child_pred, child_args}, EVALUATION_LINK);
+		Handle child_args = createLink(HandleSeq{x, y}, LIST_LINK);
+		Handle child_eval = createLink(HandleSeq{child_pred, child_args}, EVALUATION_LINK);
 
 		Handle parent_pred = createNode(PREDICATE_NODE, "parent");
-		Handle parent_args = createLink({y, x}, LIST_LINK);
-		Handle parent_eval = createLink({parent_pred, parent_args}, EVALUATION_LINK);
+		Handle parent_args = createLink(HandleSeq{y, x}, LIST_LINK);
+		Handle parent_eval = createLink(HandleSeq{parent_pred, parent_args}, EVALUATION_LINK);
 
-		Handle impl = createLink({parent_eval, child_eval}, IMPLICATION_LINK);
+		Handle impl = createLink(HandleSeq{parent_eval, child_eval}, IMPLICATION_LINK);
 
 		std::string result = Prolog::prt_datalog(impl, false);
 
@@ -291,7 +291,7 @@ public:
 	{
 		// Implication with wrong arity should throw
 		Handle a = createNode(CONCEPT_NODE, "a");
-		Handle impl = createLink({a}, IMPLICATION_LINK);
+		Handle impl = createLink(HandleSeq{a}, IMPLICATION_LINK);
 
 		TS_ASSERT_THROWS(Prolog::prt_datalog(impl, false), SyntaxException&);
 	}
@@ -303,18 +303,18 @@ public:
 		Handle x = createNode(VARIABLE_NODE, "X");
 		Handle y = createNode(VARIABLE_NODE, "Y");
 		Handle z = createNode(VARIABLE_NODE, "Z");
-		Handle gp_args = createLink({x, z}, LIST_LINK);
-		Handle gp_eval = createLink({gp_pred, gp_args}, EVALUATION_LINK);
+		Handle gp_args = createLink(HandleSeq{x, z}, LIST_LINK);
+		Handle gp_eval = createLink(HandleSeq{gp_pred, gp_args}, EVALUATION_LINK);
 
 		Handle parent_pred = createNode(PREDICATE_NODE, "parent");
-		Handle p1_args = createLink({x, y}, LIST_LINK);
-		Handle p1_eval = createLink({parent_pred, p1_args}, EVALUATION_LINK);
+		Handle p1_args = createLink(HandleSeq{x, y}, LIST_LINK);
+		Handle p1_eval = createLink(HandleSeq{parent_pred, p1_args}, EVALUATION_LINK);
 
-		Handle p2_args = createLink({y, z}, LIST_LINK);
-		Handle p2_eval = createLink({parent_pred, p2_args}, EVALUATION_LINK);
+		Handle p2_args = createLink(HandleSeq{y, z}, LIST_LINK);
+		Handle p2_eval = createLink(HandleSeq{parent_pred, p2_args}, EVALUATION_LINK);
 
-		Handle and_link = createLink({p1_eval, p2_eval}, AND_LINK);
-		Handle impl = createLink({and_link, gp_eval}, IMPLICATION_LINK);
+		Handle and_link = createLink(HandleSeq{p1_eval, p2_eval}, AND_LINK);
+		Handle impl = createLink(HandleSeq{and_link, gp_eval}, IMPLICATION_LINK);
 
 		std::string result = Prolog::prt_datalog(impl, false);
 
