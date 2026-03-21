@@ -20,6 +20,15 @@ TARGET_LINK_LIBRARIES(persist-rocks
 	rocksdb
 )
 
+# In unified builds, ATOMSPACE_LIBRARIES / ATOMSPACE_STORAGE_LIBRARIES may
+# be unset; add the cmake targets directly so the required symbols are
+# available without polluting the install-time export interface.
+TARGET_LINK_LIBRARIES(persist-rocks PRIVATE
+	persist
+	smob
+	sexpr
+)
+
 ADD_DEPENDENCIES(persist-rocks persist_rocks_atom_types)
 
 ADD_GUILE_EXTENSION(SCM_CONFIG persist-rocks
