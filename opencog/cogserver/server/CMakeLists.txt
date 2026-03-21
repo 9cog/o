@@ -34,10 +34,15 @@ ADD_EXECUTABLE(cogserver
 	CogServerMain.cc
 )
 
+# CogServerMain.cc directly constructs an AtomSpace and uses atomspace
+# symbols, so cogserver must link against atomspace (and cogutil) in
+# addition to the 'server' library (which only exposes them as PRIVATE).
 TARGET_LINK_LIBRARIES(cogserver
 	server
 	servernode
 	cogserver-types
+	atomspace
+	cogutil
 )
 
 IF (WIN32)
