@@ -18,12 +18,6 @@ TARGET_LINK_LIBRARIES(persist-rocks
 	${ATOMSPACE_STORAGE_LIBRARIES}
 	${ATOMSPACE_LIBRARIES}
 	rocksdb
-)
-
-# In unified builds, ATOMSPACE_LIBRARIES / ATOMSPACE_STORAGE_LIBRARIES may
-# be unset; add the cmake targets directly so the required symbols are
-# available without polluting the install-time export interface.
-TARGET_LINK_LIBRARIES(persist-rocks PRIVATE
 	persist
 	smob
 	sexpr
