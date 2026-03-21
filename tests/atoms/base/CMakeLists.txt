@@ -1,7 +1,11 @@
 
+LINK_LIBRARIES(smob atomspace cogutil)
+
 ADD_CXXTEST(AtomUTest)
 ADD_CXXTEST(NodeUTest)
+TARGET_LINK_LIBRARIES(NodeUTest scope)
 ADD_CXXTEST(LinkUTest)
+TARGET_LINK_LIBRARIES(LinkUTest scope)
 ADD_CXXTEST(ClassServerUTest)
 
 # Special unit test atom types, tested by the FactoryUTest

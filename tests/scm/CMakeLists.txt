@@ -11,6 +11,8 @@ INCLUDE_DIRECTORIES (
 	${PROJECT_SOURCE_DIR}/opencog/util
 )
 
+LINK_LIBRARIES(smob atomspace cogutil)
+
 ADD_CXXTEST(BasicSCMUTest)
 ADD_CXXTEST(SCMPrimitiveUTest)
 ADD_CXXTEST(MultiAtomSpaceUTest)

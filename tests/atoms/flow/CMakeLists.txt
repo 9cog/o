@@ -1,4 +1,6 @@
 
+LINK_LIBRARIES(atomspace cogutil)
+
 ADD_CXXTEST(ValueOfUTest)
 ADD_CXXTEST(StreamValueOfUTest)
 
@@ -9,7 +11,7 @@ IF (HAVE_GUILE)
 	ADD_GUILE_TEST(KeysOfTest keys-of-test.scm)
 	ADD_GUILE_TEST(MessagesOfTest messages-of-test.scm)
 
-	LINK_LIBRARIES(execution smob)
+	LINK_LIBRARIES(execution smob atomspace cogutil)
 	ADD_CXXTEST(FormulaUTest)
 	ADD_CXXTEST(SetValueUTest)
 	ADD_CXXTEST(DynamicUTest)

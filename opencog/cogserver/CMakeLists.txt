@@ -1,4 +1,12 @@
 
+CONFIGURE_FILE(
+	"${CMAKE_CURRENT_SOURCE_DIR}/version.h.in"
+	"${CMAKE_CURRENT_BINARY_DIR}/version.h"
+)
+
+# Make the generated header available to all cogserver sub-targets.
+INCLUDE_DIRECTORIES("${CMAKE_CURRENT_BINARY_DIR}")
+
 ADD_SUBDIRECTORY (types)
 ADD_SUBDIRECTORY (server)
 ADD_SUBDIRECTORY (atoms)

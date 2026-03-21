@@ -30,7 +30,7 @@ TARGET_LINK_LIBRARIES(PythonEvalUTest
 	atomspace
 	PythonEval
 	atomspace_cython
-	${COGUTIL_LIBRARY}
+	cogutil
 )
 
 SET_PROPERTY(TEST PythonEvalUTest
@@ -42,7 +42,7 @@ TARGET_LINK_LIBRARIES(PythonInitFiniUTest
 	PythonEval
 	atomspace_cython
 	atomspace
-	${COGUTIL_LIBRARY}
+	cogutil
 )
 
 SET_PROPERTY(TEST PythonInitFiniUTest
@@ -114,7 +114,7 @@ TARGET_LINK_LIBRARIES(PyEvalUTest
 	cogserver-types
 	${COGSERVER_LIBRARIES}
 	${ATOMSPACE_LIBRARIES}
-	${COGUTIL_LIBRARY}
+	cogutil
 )
 
 # Set COGSERVER_MODULE_PATH so modules can be found in the build directory

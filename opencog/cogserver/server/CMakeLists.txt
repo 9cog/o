@@ -11,13 +11,18 @@ ADD_LIBRARY (server SHARED
 	WebServer.cc
 )
 
-TARGET_LINK_LIBRARIES(server
+TARGET_LINK_LIBRARIES(server PUBLIC
 	network
 	${ATOMSPACE_LIBRARIES}
 	${COGUTIL_LIBRARY}
 	${OPENSSL_LIBRARIES}
 	dl
 )
+
+# In unified builds, COGUTIL_LIBRARY / ATOMSPACE_LIBRARIES may be unset;
+# add the cmake targets directly as PRIVATE deps so the symbols are
+# available without polluting the install-time export interface.
+TARGET_LINK_LIBRARIES(server PRIVATE atomspace cogutil)
 
 IF(HAVE_MCP)
 	TARGET_LINK_LIBRARIES(server mcp-eval)

@@ -24,5 +24,7 @@ ADD_SUBDIRECTORY (aten)
 
 IF (HAVE_GUILE)
 	ADD_CXXTEST(HashUTest)
+	TARGET_LINK_LIBRARIES(HashUTest smob atomspace cogutil)
 	ADD_CXXTEST(RandomUTest)
+	TARGET_LINK_LIBRARIES(RandomUTest smob atomspace cogutil)
 ENDIF (HAVE_GUILE)
