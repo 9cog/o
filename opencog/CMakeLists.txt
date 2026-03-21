@@ -11,7 +11,7 @@ INCLUDE_DIRECTORIES(${CMAKE_BINARY_DIR})
 # Enable testing without installing first.
 # Must be declared early as subdirectories use it.
 IF (HAVE_GUILE)
-    DECLARE_GUILE_CONFIG_TARGET(SCM_CONFIG "opencog cs-config" "OPENCOG_TEST")
+    DECLARE_GUILE_CONFIG_TARGET(SCM_CONFIG "opencog as-config" "OPENCOG_TEST")
 ENDIF (HAVE_GUILE)
 
 # ============================================================
@@ -41,7 +41,7 @@ ADD_SUBDIRECTORY(network)
 ADD_SUBDIRECTORY(cogserver)
 
 IF (HAVE_GUILE)
-    WRITE_GUILE_CONFIG(${GUILE_BIN_DIR}/opencog/cs-config.scm SCM_CONFIG TRUE)
-    WRITE_GUILE_CONFIG(${GUILE_BIN_DIR}/opencog/cs-config-installable.scm SCM_CONFIG FALSE)
-    INSTALL(FILES ${GUILE_BIN_DIR}/opencog/cs-config-installable.scm DESTINATION ${GUILE_SITE_DIR}/opencog RENAME cs-config.scm)
+    WRITE_GUILE_CONFIG(${GUILE_BIN_DIR}/opencog/as-config.scm SCM_CONFIG TRUE)
+    WRITE_GUILE_CONFIG(${GUILE_BIN_DIR}/opencog/as-config-installable.scm SCM_CONFIG FALSE)
+    INSTALL(FILES ${GUILE_BIN_DIR}/opencog/as-config-installable.scm DESTINATION ${GUILE_SITE_DIR}/opencog RENAME as-config.scm)
 ENDIF (HAVE_GUILE)
