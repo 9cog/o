@@ -8,6 +8,8 @@ ADD_CXXTEST(ChemTypesUTest)
 TARGET_LINK_LIBRARIES(ChemTypesUTest
 	-Wl,--no-as-needed
 	test-chem-types
+	atomspace
+	cogutil
 	-Wl,--as-needed)
 
 # Add Scheme test

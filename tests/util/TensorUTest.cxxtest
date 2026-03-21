@@ -1,0 +1,341 @@
+/*
+ * tests/util/TensorUTest.cxxtest
+ *
+ * Copyright (C) 2025 OpenCog Foundation
+ * All Rights Reserved
+ *
+ * Unit tests for the Tensor utility class (opencog/util/tensor.h).
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License v3 as
+ * published by the Free Software Foundation and including the exceptions
+ * at http://opencog.org/wiki/Licenses
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program; if not, write to:
+ * Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
+
+#include <cmath>
+
+#include <opencog/util/tensor.h>
+#include <cxxtest/TestSuite.h>
+
+using namespace opencog;
+
+class TensorUTest : public CxxTest::TestSuite
+{
+private:
+	static constexpr double EPSILON = 1e-9;
+
+	bool approx_eq(double a, double b)
+	{
+		return std::abs(a - b) < EPSILON;
+	}
+
+public:
+	// Test zeros factory
+	void test_zeros()
+	{
+		auto t = Tensor<double>::zeros({3, 4});
+		TS_ASSERT_EQUALS(t.ndim(), (size_t)2);
+		TS_ASSERT_EQUALS(t.numel(), (size_t)12);
+
+		auto shape = t.shape();
+		TS_ASSERT_EQUALS(shape[0], (size_t)3);
+		TS_ASSERT_EQUALS(shape[1], (size_t)4);
+
+		// All elements should be zero
+		for (size_t i = 0; i < 3; i++)
+			for (size_t j = 0; j < 4; j++)
+				TS_ASSERT_EQUALS(t.at({i, j}), 0.0);
+	}
+
+	// Test ones factory
+	void test_ones()
+	{
+		auto t = Tensor<double>::ones({2, 3});
+		TS_ASSERT_EQUALS(t.numel(), (size_t)6);
+
+		for (size_t i = 0; i < 2; i++)
+			for (size_t j = 0; j < 3; j++)
+				TS_ASSERT_EQUALS(t.at({i, j}), 1.0);
+	}
+
+	// Test full factory
+	void test_full()
+	{
+		auto t = Tensor<double>::full({2, 2}, 3.14);
+		TS_ASSERT_EQUALS(t.numel(), (size_t)4);
+
+		for (size_t i = 0; i < 2; i++)
+			for (size_t j = 0; j < 2; j++)
+				TS_ASSERT_DELTA(t.at({i, j}), 3.14, EPSILON);
+	}
+
+	// Test arange factory
+	void test_arange()
+	{
+		auto t = Tensor<double>::arange(0.0, 5.0, 1.0);
+		TS_ASSERT_EQUALS(t.numel(), (size_t)5);
+		TS_ASSERT_EQUALS(t.ndim(), (size_t)1);
+		for (size_t i = 0; i < 5; i++)
+			TS_ASSERT_DELTA(t.at({i}), (double)i, EPSILON);
+	}
+
+	// Test linspace factory
+	void test_linspace()
+	{
+		auto t = Tensor<double>::linspace(0.0, 1.0, 5);
+		TS_ASSERT_EQUALS(t.numel(), (size_t)5);
+		TS_ASSERT_DELTA(t.at({0}), 0.0, EPSILON);
+		TS_ASSERT_DELTA(t.at({4}), 1.0, EPSILON);
+		TS_ASSERT_DELTA(t.at({2}), 0.5, EPSILON);
+	}
+
+	// Test eye (identity matrix)
+	void test_eye()
+	{
+		auto t = Tensor<double>::eye(3);
+		TS_ASSERT_EQUALS(t.ndim(), (size_t)2);
+		TS_ASSERT_EQUALS(t.numel(), (size_t)9);
+
+		for (size_t i = 0; i < 3; i++)
+			for (size_t j = 0; j < 3; j++)
+				TS_ASSERT_DELTA(t.at({i, j}), (i == j) ? 1.0 : 0.0, EPSILON);
+	}
+
+	// Test addition operator
+	void test_add()
+	{
+		auto a = Tensor<double>::ones({2, 2});
+		auto b = Tensor<double>::full({2, 2}, 2.0);
+		auto c = a + b;
+
+		TS_ASSERT_EQUALS(c.numel(), (size_t)4);
+		for (size_t i = 0; i < 2; i++)
+			for (size_t j = 0; j < 2; j++)
+				TS_ASSERT_DELTA(c.at({i, j}), 3.0, EPSILON);
+	}
+
+	// Test subtraction operator
+	void test_sub()
+	{
+		auto a = Tensor<double>::full({3}, 5.0);
+		auto b = Tensor<double>::full({3}, 2.0);
+		auto c = a - b;
+
+		for (size_t i = 0; i < 3; i++)
+			TS_ASSERT_DELTA(c.at({i}), 3.0, EPSILON);
+	}
+
+	// Test scalar addition
+	void test_scalar_add()
+	{
+		auto t = Tensor<double>::zeros({3});
+		auto r = t + 5.0;
+		for (size_t i = 0; i < 3; i++)
+			TS_ASSERT_DELTA(r.at({i}), 5.0, EPSILON);
+	}
+
+	// Test element-wise multiplication
+	void test_mul()
+	{
+		auto a = Tensor<double>::full({3}, 3.0);
+		auto b = Tensor<double>::full({3}, 4.0);
+		auto c = a * b;
+		for (size_t i = 0; i < 3; i++)
+			TS_ASSERT_DELTA(c.at({i}), 12.0, EPSILON);
+	}
+
+	// Test unary negation
+	void test_neg()
+	{
+		auto t = Tensor<double>::full({3}, 5.0);
+		auto n = -t;
+		for (size_t i = 0; i < 3; i++)
+			TS_ASSERT_DELTA(n.at({i}), -5.0, EPSILON);
+	}
+
+	// Test sum reduction
+	void test_sum()
+	{
+		auto t = Tensor<double>::ones({4});
+		double s = t.sum();
+		TS_ASSERT_DELTA(s, 4.0, EPSILON);
+	}
+
+	// Test mean reduction
+	void test_mean()
+	{
+		auto t = Tensor<double>::arange(1.0, 5.0, 1.0);
+		double m = t.mean();
+		TS_ASSERT_DELTA(m, 2.5, EPSILON);
+	}
+
+	// Test max/min
+	void test_max_min()
+	{
+		auto t = Tensor<double>::arange(1.0, 6.0, 1.0);
+		TS_ASSERT_DELTA(t.max(), 5.0, EPSILON);
+		TS_ASSERT_DELTA(t.min(), 1.0, EPSILON);
+	}
+
+	// Test abs
+	void test_abs()
+	{
+		auto t = Tensor<double>::arange(-2.0, 3.0, 1.0);
+		auto a = t.abs();
+		// [-2, -1, 0, 1, 2] -> [2, 1, 0, 1, 2]
+		TS_ASSERT_DELTA(a.at({0}), 2.0, EPSILON);
+		TS_ASSERT_DELTA(a.at({1}), 1.0, EPSILON);
+		TS_ASSERT_DELTA(a.at({2}), 0.0, EPSILON);
+		TS_ASSERT_DELTA(a.at({3}), 1.0, EPSILON);
+		TS_ASSERT_DELTA(a.at({4}), 2.0, EPSILON);
+	}
+
+	// Test reshape
+	void test_reshape()
+	{
+		auto t = Tensor<double>::arange(0.0, 6.0, 1.0);
+		TS_ASSERT_EQUALS(t.ndim(), (size_t)1);
+		TS_ASSERT_EQUALS(t.numel(), (size_t)6);
+
+		auto r = t.reshape({2, 3});
+		TS_ASSERT_EQUALS(r.ndim(), (size_t)2);
+		TS_ASSERT_EQUALS(r.numel(), (size_t)6);
+		TS_ASSERT_EQUALS(r.shape()[0], (size_t)2);
+		TS_ASSERT_EQUALS(r.shape()[1], (size_t)3);
+	}
+
+	// Test flatten
+	void test_flatten()
+	{
+		auto t = Tensor<double>::zeros({3, 4});
+		auto f = t.flatten();
+		TS_ASSERT_EQUALS(f.ndim(), (size_t)1);
+		TS_ASSERT_EQUALS(f.numel(), (size_t)12);
+	}
+
+	// Test transpose (t)
+	void test_transpose()
+	{
+		auto t = Tensor<double>::zeros({3, 4});
+		t.at({0, 1}) = 7.0;
+		t.at({2, 3}) = 9.0;
+
+		auto tr = t.t();
+		TS_ASSERT_EQUALS(tr.shape()[0], (size_t)4);
+		TS_ASSERT_EQUALS(tr.shape()[1], (size_t)3);
+		TS_ASSERT_DELTA(tr.at({1, 0}), 7.0, EPSILON);
+		TS_ASSERT_DELTA(tr.at({3, 2}), 9.0, EPSILON);
+	}
+
+	// Test clone
+	void test_clone()
+	{
+		auto original = Tensor<double>::full({3}, 5.0);
+		auto cloned = original.clone();
+
+		// Clone has same values
+		for (size_t i = 0; i < 3; i++)
+			TS_ASSERT_DELTA(cloned.at({i}), 5.0, EPSILON);
+
+		// Modifying clone doesn't affect original
+		cloned.at({0}) = 99.0;
+		TS_ASSERT_DELTA(original.at({0}), 5.0, EPSILON);
+	}
+
+	// Test fill_
+	void test_fill_inplace()
+	{
+		auto t = Tensor<double>::zeros({4});
+		t.fill_(3.7);
+		for (size_t i = 0; i < 4; i++)
+			TS_ASSERT_DELTA(t.at({i}), 3.7, EPSILON);
+	}
+
+	// Test item() on scalar tensor
+	void test_item()
+	{
+		auto t = Tensor<double>::full({1}, 42.0);
+		TS_ASSERT_DELTA(t.item(), 42.0, EPSILON);
+	}
+
+	// Test matmul (matrix multiplication)
+	void test_matmul()
+	{
+		// 2x2 identity * 2x2 matrix = same matrix
+		auto I = Tensor<double>::eye(2);
+		auto A = Tensor<double>::full({2, 2}, 3.0);
+		A.at({0, 0}) = 1.0;
+		A.at({0, 1}) = 2.0;
+		A.at({1, 0}) = 3.0;
+		A.at({1, 1}) = 4.0;
+
+		auto result = I.matmul(A);
+		TS_ASSERT_DELTA(result.at({0, 0}), 1.0, EPSILON);
+		TS_ASSERT_DELTA(result.at({0, 1}), 2.0, EPSILON);
+		TS_ASSERT_DELTA(result.at({1, 0}), 3.0, EPSILON);
+		TS_ASSERT_DELTA(result.at({1, 1}), 4.0, EPSILON);
+	}
+
+	// Test allclose
+	void test_allclose()
+	{
+		auto a = Tensor<double>::ones({3});
+		auto b = Tensor<double>::ones({3});
+		TS_ASSERT(a.allclose(b));
+
+		b.at({1}) = 1.0 + 1e-7;
+		TS_ASSERT(a.allclose(b));  // Within default tolerance
+
+		b.at({1}) = 2.0;
+		TS_ASSERT(!a.allclose(b));
+	}
+
+	// Test equal
+	void test_equal()
+	{
+		auto a = Tensor<double>::full({3}, 5.0);
+		auto b = Tensor<double>::full({3}, 5.0);
+		TS_ASSERT(a.equal(b));
+
+		auto c = Tensor<double>::full({3}, 6.0);
+		TS_ASSERT(!a.equal(c));
+	}
+
+	// Test ndim, numel, shape on 1D tensor
+	void test_1d_properties()
+	{
+		auto t = Tensor<double>::zeros({5});
+		TS_ASSERT_EQUALS(t.ndim(), (size_t)1);
+		TS_ASSERT_EQUALS(t.numel(), (size_t)5);
+		TS_ASSERT_EQUALS(t.shape().size(), (size_t)1);
+		TS_ASSERT_EQUALS(t.shape()[0], (size_t)5);
+	}
+
+	// Test 3D tensor properties
+	void test_3d_properties()
+	{
+		auto t = Tensor<double>::zeros({2, 3, 4});
+		TS_ASSERT_EQUALS(t.ndim(), (size_t)3);
+		TS_ASSERT_EQUALS(t.numel(), (size_t)24);
+	}
+
+	// Test empty() method
+	void test_empty_method()
+	{
+		Tensor<double> empty_t;
+		TS_ASSERT(empty_t.empty());
+
+		auto t = Tensor<double>::zeros({3});
+		TS_ASSERT(!t.empty());
+	}
+};

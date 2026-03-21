@@ -3,8 +3,12 @@
 LINK_LIBRARIES(atomspace cogutil)
 
 ADD_CXXTEST(ValueUTest)
+
 ADD_CXXTEST(SortedValueUTest)
+TARGET_LINK_LIBRARIES(SortedValueUTest smob atomspace cogutil)
+
 ADD_CXXTEST(GroupValueUTest)
+TARGET_LINK_LIBRARIES(GroupValueUTest smob atomspace cogutil)
 
 IF (HAVE_GUILE)
 	ADD_CXXTEST(StreamUTest)

@@ -4,7 +4,7 @@
 # ============================================================
 # AtomSpace Storage Tests
 # ============================================================
-LINK_LIBRARIES(atomspace)
+LINK_LIBRARIES(atomspace cogutil)
 
 ADD_SUBDIRECTORY (api)
 ADD_SUBDIRECTORY (csv)

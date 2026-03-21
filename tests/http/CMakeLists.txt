@@ -2,8 +2,8 @@ LINK_LIBRARIES(
 	server
 	servernode
 	cogserver-types
-	${ATOMSPACE_LIBRARIES}
-	${COGUTIL_LIBRARIES}
+	atomspace
+	cogutil
 )
 
 ADD_CXXTEST(HttpUTest)

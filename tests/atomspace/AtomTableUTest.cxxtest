@@ -36,7 +36,6 @@
 #include <opencog/guile/SchemeEval.h>
 #include <opencog/util/Logger.h>
 #include <opencog/util/platform.h>
-#include "../query/test-types.h"
 
 using namespace opencog;
 using namespace std;
@@ -59,7 +58,6 @@ public:
         //logger().setLevel(Logger::DEBUG);
         //logger().setPrintToStdoutFlag(true);
 
-#include "../query/test-types.cc"
         atomSpace = createAtomSpace();
         table = atomSpace;
     }
@@ -77,7 +75,7 @@ public:
 
     void testSimple()
     {
-        Handle time = table->add_atom(createNode(TIME_NODE, "1"));
+        Handle time = table->add_atom(createNode(CONCEPT_NODE, "time-1"));
         Handle word = table->add_atom(createNode(NUMBER_NODE, "1"));
         Handle sense = table->add_atom(createNode(CONCEPT_NODE, "28675194"));
         HandleSeq os;

@@ -1,0 +1,225 @@
+/*
+ * tests/util/ConcurrentQueueUTest.cxxtest
+ *
+ * Copyright (C) 2025 OpenCog Foundation
+ * All Rights Reserved
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License v3 as
+ * published by the Free Software Foundation and including the exceptions
+ * at http://opencog.org/wiki/Licenses
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program; if not, write to:
+ * Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
+
+#include <atomic>
+#include <string>
+#include <thread>
+#include <vector>
+
+#include <opencog/util/concurrent_queue.h>
+#include <cxxtest/TestSuite.h>
+
+class ConcurrentQueueUTest : public CxxTest::TestSuite
+{
+public:
+	// Basic push/pop test
+	void test_push_pop()
+	{
+		concurrent_queue<int> q;
+		q.push(42);
+		q.push(7);
+
+		int val = 0;
+		q.pop(val);
+		TS_ASSERT_EQUALS(val, 42);
+
+		q.pop(val);
+		TS_ASSERT_EQUALS(val, 7);
+	}
+
+	// Test value_pop convenience method
+	void test_value_pop()
+	{
+		concurrent_queue<std::string> q;
+		q.push(std::string("hello"));
+		q.push(std::string("world"));
+
+		TS_ASSERT_EQUALS(q.value_pop(), "hello");
+		TS_ASSERT_EQUALS(q.value_pop(), "world");
+	}
+
+	// Test is_empty and size
+	void test_empty_and_size()
+	{
+		concurrent_queue<int> q;
+		TS_ASSERT_EQUALS(q.size(), (size_t)0);
+		TS_ASSERT(q.is_empty());
+
+		q.push(1);
+		TS_ASSERT_EQUALS(q.size(), (size_t)1);
+		TS_ASSERT(!q.is_empty());
+
+		q.push(2);
+		TS_ASSERT_EQUALS(q.size(), (size_t)2);
+
+		int val;
+		q.pop(val);
+		TS_ASSERT_EQUALS(q.size(), (size_t)1);
+	}
+
+	// Test try_get returns false when empty (after cancel)
+	void test_try_get_empty()
+	{
+		concurrent_queue<int> q;
+		q.cancel();
+
+		int val = 0;
+		bool got = q.try_get(val);
+		TS_ASSERT(!got);
+	}
+
+	// Test try_get returns true when item available
+	void test_try_get_with_item()
+	{
+		concurrent_queue<int> q;
+		q.push(99);
+
+		int val = 0;
+		bool got = q.try_get(val);
+		TS_ASSERT(got);
+		TS_ASSERT_EQUALS(val, 99);
+	}
+
+	// Test cancel prevents further push/pop
+	void test_cancel()
+	{
+		concurrent_queue<int> q;
+		q.push(1);
+		q.cancel();
+
+		// After cancel, push should throw
+		bool threw = false;
+		try {
+			q.push(2);
+		} catch (const concurrent_queue<int>::Canceled&) {
+			threw = true;
+		}
+		TS_ASSERT(threw);
+	}
+
+	// Test cancel_reset allows reuse after cancel
+	void test_cancel_reset()
+	{
+		concurrent_queue<int> q;
+		q.push(1);
+		q.cancel();
+		q.cancel_reset();
+
+		// After reset, should be able to push again; item 1 is still in queue
+		q.push(2);
+		TS_ASSERT_EQUALS(q.size(), (size_t)2);
+
+		int val;
+		q.pop(val);
+		TS_ASSERT_EQUALS(val, 1);
+		q.pop(val);
+		TS_ASSERT_EQUALS(val, 2);
+	}
+
+	// Test wait_and_take_all
+	void test_wait_and_take_all()
+	{
+		concurrent_queue<int> q;
+		q.push(10);
+		q.push(20);
+		q.push(30);
+		q.cancel();
+
+		auto all = q.wait_and_take_all();
+		TS_ASSERT_EQUALS(all.size(), (size_t)3);
+
+		int v1, v2, v3;
+		v1 = all.front(); all.pop();
+		v2 = all.front(); all.pop();
+		v3 = all.front(); all.pop();
+		TS_ASSERT_EQUALS(v1, 10);
+		TS_ASSERT_EQUALS(v2, 20);
+		TS_ASSERT_EQUALS(v3, 30);
+	}
+
+	// Test snapshot
+	void test_snapshot()
+	{
+		concurrent_queue<int> q;
+		q.push(1);
+		q.push(2);
+		q.push(3);
+
+		auto snap = q.snapshot();
+		TS_ASSERT_EQUALS(snap.size(), (size_t)3);
+		// Queue should still have its items
+		TS_ASSERT_EQUALS(q.size(), (size_t)3);
+	}
+
+	// Test multi-threaded producer/consumer
+	void test_multithreaded()
+	{
+		concurrent_queue<int> q;
+		const int NUM_ITEMS = 100;
+		std::atomic<int> sum(0);
+
+		// Producer thread
+		std::thread producer([&]() {
+			for (int i = 0; i < NUM_ITEMS; i++) {
+				q.push(i);
+			}
+			q.cancel();
+		});
+
+		// Consumer thread
+		std::thread consumer([&]() {
+			int val;
+			while (true) {
+				try {
+					q.pop(val);
+					sum += val;
+				} catch (const concurrent_queue<int>::Canceled&) {
+					// Drain remaining items
+					auto rest = q.wait_and_take_all();
+					while (!rest.empty()) {
+						sum += rest.front();
+						rest.pop();
+					}
+					break;
+				}
+			}
+		});
+
+		producer.join();
+		consumer.join();
+
+		int expected = (NUM_ITEMS * (NUM_ITEMS - 1)) / 2;
+		TS_ASSERT_EQUALS(sum.load(), expected);
+	}
+
+	// Test move push
+	void test_move_push()
+	{
+		concurrent_queue<std::string> q;
+		std::string s = "moved string";
+		q.push(std::move(s));
+		// s may be in a valid but unspecified state now
+
+		TS_ASSERT_EQUALS(q.size(), (size_t)1);
+		TS_ASSERT_EQUALS(q.value_pop(), "moved string");
+	}
+};

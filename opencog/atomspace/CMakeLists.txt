@@ -7,7 +7,7 @@ IF (HAVE_FOLLY)
 	INCLUDE_DIRECTORIES(${FOLLY_INCLUDE_DIR})
 ENDIF (HAVE_FOLLY)
 
-ADD_LIBRARY (atomspace
+ADD_LIBRARY (atomspace SHARED
 	AtomSpace.cc
 	AtomTable.cc
 	Frame.cc

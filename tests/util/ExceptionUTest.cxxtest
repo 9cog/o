@@ -1,0 +1,253 @@
+/*
+ * tests/util/ExceptionUTest.cxxtest
+ *
+ * Copyright (C) 2025 OpenCog Foundation
+ * All Rights Reserved
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License v3 as
+ * published by the Free Software Foundation and including the exceptions
+ * at http://opencog.org/wiki/Licenses
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program; if not, write to:
+ * Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
+
+#include <sstream>
+#include <string>
+
+#include <opencog/util/exceptions.h>
+#include <cxxtest/TestSuite.h>
+
+using namespace opencog;
+
+class ExceptionUTest : public CxxTest::TestSuite
+{
+public:
+	// Test StandardException base class message
+	void test_standard_exception_default()
+	{
+		StandardException e;
+		// Default message should be empty or non-null
+		const char* msg = e.get_message();
+		TS_ASSERT(msg != nullptr);
+	}
+
+	// Test StandardException set_message
+	void test_standard_exception_set_message()
+	{
+		StandardException e;
+		e.set_message("test error message");
+		TS_ASSERT_EQUALS(std::string(e.get_message()), "test error message");
+		TS_ASSERT_EQUALS(std::string(e.what()), "test error message");
+	}
+
+	// Test StandardException copy constructor preserves message
+	void test_standard_exception_copy()
+	{
+		StandardException e1;
+		e1.set_message("original message");
+
+		StandardException e2(e1);
+		TS_ASSERT_EQUALS(std::string(e2.get_message()), "original message");
+	}
+
+	// Test StandardException assignment operator
+	void test_standard_exception_assign()
+	{
+		StandardException e1;
+		e1.set_message("assigned message");
+
+		StandardException e2;
+		e2 = e1;
+		TS_ASSERT_EQUALS(std::string(e2.get_message()), "assigned message");
+	}
+
+	// Test RuntimeException is a StandardException
+	void test_runtime_exception_is_standard()
+	{
+		bool caught_as_standard = false;
+		try {
+			throw RuntimeException(TRACE_INFO, "runtime error: %s", "detail");
+		} catch (const StandardException& e) {
+			caught_as_standard = true;
+			TS_ASSERT(std::string(e.what()).find("runtime error: detail") != std::string::npos);
+		}
+		TS_ASSERT(caught_as_standard);
+	}
+
+	// Test RuntimeException caught directly
+	void test_runtime_exception_catch()
+	{
+		bool caught = false;
+		try {
+			throw RuntimeException(TRACE_INFO, "test runtime %d", 42);
+		} catch (const RuntimeException& e) {
+			caught = true;
+			TS_ASSERT(std::string(e.what()).find("test runtime 42") != std::string::npos);
+		}
+		TS_ASSERT(caught);
+	}
+
+	// Test InvalidParamException
+	void test_invalid_param_exception()
+	{
+		bool caught = false;
+		try {
+			throw InvalidParamException(TRACE_INFO, "invalid param: %s", "foo");
+		} catch (const InvalidParamException& e) {
+			caught = true;
+			TS_ASSERT(std::string(e.what()).find("invalid param: foo") != std::string::npos);
+		}
+		TS_ASSERT(caught);
+	}
+
+	// Test InvalidParamException is a RuntimeException
+	void test_invalid_param_is_runtime()
+	{
+		bool caught_as_runtime = false;
+		try {
+			throw InvalidParamException(TRACE_INFO, "param error");
+		} catch (const RuntimeException& e) {
+			caught_as_runtime = true;
+		}
+		TS_ASSERT(caught_as_runtime);
+	}
+
+	// Test IOException
+	void test_io_exception()
+	{
+		bool caught = false;
+		try {
+			throw IOException(TRACE_INFO, "io error %d", 5);
+		} catch (const IOException& e) {
+			caught = true;
+			TS_ASSERT(std::string(e.what()).find("io error 5") != std::string::npos);
+		}
+		TS_ASSERT(caught);
+	}
+
+	// Test SyntaxException
+	void test_syntax_exception()
+	{
+		bool caught = false;
+		try {
+			throw SyntaxException(TRACE_INFO, "syntax error at line %d", 10);
+		} catch (const SyntaxException& e) {
+			caught = true;
+			TS_ASSERT(std::string(e.what()).find("syntax error at line 10") != std::string::npos);
+		}
+		TS_ASSERT(caught);
+	}
+
+	// Test IndexErrorException
+	void test_index_error_exception()
+	{
+		bool caught = false;
+		try {
+			throw IndexErrorException(TRACE_INFO, "index %d out of bounds", 99);
+		} catch (const IndexErrorException& e) {
+			caught = true;
+			TS_ASSERT(std::string(e.what()).find("index 99 out of bounds") != std::string::npos);
+		}
+		TS_ASSERT(caught);
+	}
+
+	// Test NotFoundException (silent - no message required)
+	void test_not_found_exception()
+	{
+		bool caught = false;
+		try {
+			throw NotFoundException();
+		} catch (const NotFoundException& e) {
+			caught = true;
+		}
+		TS_ASSERT(caught);
+	}
+
+	// Test NotFoundException with message
+	void test_not_found_exception_with_message()
+	{
+		bool caught = false;
+		try {
+			throw NotFoundException(TRACE_INFO, "atom '%s' not found", "ConceptNode");
+		} catch (const NotFoundException& e) {
+			caught = true;
+			TS_ASSERT(std::string(e.what()).find("ConceptNode") != std::string::npos);
+		}
+		TS_ASSERT(caught);
+	}
+
+	// Test TypeCheckException (silent)
+	void test_type_check_exception()
+	{
+		bool caught = false;
+		try {
+			throw TypeCheckException();
+		} catch (const TypeCheckException& e) {
+			caught = true;
+		}
+		TS_ASSERT(caught);
+	}
+
+	// Test DeleteException
+	void test_delete_exception()
+	{
+		bool caught = false;
+		try {
+			throw DeleteException();
+		} catch (const DeleteException& e) {
+			caught = true;
+		}
+		TS_ASSERT(caught);
+	}
+
+	// Test NotEvaluatableException
+	void test_not_evaluatable_exception()
+	{
+		bool caught = false;
+		try {
+			throw NotEvaluatableException();
+		} catch (const NotEvaluatableException& e) {
+			caught = true;
+		}
+		TS_ASSERT(caught);
+	}
+
+	// Test exception inheritance hierarchy for SilentException
+	void test_silent_exception_hierarchy()
+	{
+		// NotFoundException is a SilentException is a RuntimeException
+		bool caught_as_runtime = false;
+		try {
+			throw NotFoundException();
+		} catch (const RuntimeException&) {
+			caught_as_runtime = true;
+		}
+		TS_ASSERT(caught_as_runtime);
+
+		bool caught_as_silent = false;
+		try {
+			throw NotFoundException();
+		} catch (const SilentException&) {
+			caught_as_silent = true;
+		}
+		TS_ASSERT(caught_as_silent);
+	}
+
+	// Test ostream operator
+	void test_ostream_operator()
+	{
+		RuntimeException e(TRACE_INFO, "stream test");
+		std::ostringstream ss;
+		ss << e;
+		TS_ASSERT(ss.str().find("stream test") != std::string::npos);
+	}
+};

@@ -1,0 +1,147 @@
+/*
+ * tests/util/PoolUTest.cxxtest
+ *
+ * Copyright (C) 2025 OpenCog Foundation
+ * All Rights Reserved
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License v3 as
+ * published by the Free Software Foundation and including the exceptions
+ * at http://opencog.org/wiki/Licenses
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program; if not, write to:
+ * Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
+
+#include <atomic>
+#include <string>
+#include <thread>
+#include <vector>
+
+#include <opencog/util/pool.h>
+#include <cxxtest/TestSuite.h>
+
+using namespace opencog;
+
+class PoolUTest : public CxxTest::TestSuite
+{
+public:
+	// Test give_back and available
+	void test_give_back_available()
+	{
+		pool<int> p;
+		TS_ASSERT_EQUALS(p.available(), (size_t)0);
+
+		p.give_back(1);
+		TS_ASSERT_EQUALS(p.available(), (size_t)1);
+
+		p.give_back(2);
+		p.give_back(3);
+		TS_ASSERT_EQUALS(p.available(), (size_t)3);
+	}
+
+	// Test borrow removes from pool
+	void test_borrow_removes()
+	{
+		pool<int> p;
+		p.give_back(10);
+		p.give_back(20);
+
+		TS_ASSERT_EQUALS(p.available(), (size_t)2);
+
+		int& v1 = p.borrow();
+		TS_ASSERT_EQUALS(v1, 10);
+		TS_ASSERT_EQUALS(p.available(), (size_t)1);
+
+		int& v2 = p.borrow();
+		TS_ASSERT_EQUALS(v2, 20);
+		TS_ASSERT_EQUALS(p.available(), (size_t)0);
+	}
+
+	// Test borrow and give_back cycle
+	void test_borrow_give_back_cycle()
+	{
+		pool<std::string> p;
+		p.give_back(std::string("resource-A"));
+		p.give_back(std::string("resource-B"));
+
+		std::string& r1 = p.borrow();
+		TS_ASSERT_EQUALS(r1, "resource-A");
+
+		// Give it back
+		p.give_back(r1);
+		TS_ASSERT_EQUALS(p.available(), (size_t)2);
+
+		// Can borrow again
+		std::string& r2 = p.borrow();
+		TS_ASSERT(!r2.empty());
+	}
+
+	// Test multi-threaded borrow/give_back
+	void test_multithreaded_pool()
+	{
+		pool<int> p;
+		const int NUM_RESOURCES = 3;
+		const int NUM_WORKERS = 9;
+
+		// Add resources to pool
+		for (int i = 0; i < NUM_RESOURCES; i++) {
+			p.give_back(i);
+		}
+
+		std::atomic<int> completed(0);
+
+		// Each worker borrows a resource, does work, then returns it
+		auto worker = [&]() {
+			int& res = p.borrow();
+			// Simulate some work
+			std::this_thread::sleep_for(std::chrono::milliseconds(1));
+			p.give_back(res);
+			completed++;
+		};
+
+		std::vector<std::thread> threads;
+		for (int i = 0; i < NUM_WORKERS; i++) {
+			threads.emplace_back(worker);
+		}
+
+		for (auto& t : threads) {
+			t.join();
+		}
+
+		TS_ASSERT_EQUALS(completed.load(), NUM_WORKERS);
+		// All resources should be back in the pool
+		TS_ASSERT_EQUALS(p.available(), (size_t)NUM_RESOURCES);
+	}
+
+	// Test pool with custom struct
+	void test_pool_struct()
+	{
+		struct Connection {
+			int id;
+			bool in_use;
+			Connection() : id(0), in_use(false) {}
+			Connection(int i) : id(i), in_use(false) {}
+		};
+
+		pool<Connection> p;
+		p.give_back(Connection(1));
+		p.give_back(Connection(2));
+
+		Connection& c1 = p.borrow();
+		c1.in_use = true;
+		TS_ASSERT(c1.in_use);
+		TS_ASSERT_EQUALS(p.available(), (size_t)1);
+
+		c1.in_use = false;
+		p.give_back(c1);
+		TS_ASSERT_EQUALS(p.available(), (size_t)2);
+	}
+};

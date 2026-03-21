@@ -1,4 +1,6 @@
 
+LINK_LIBRARIES(atomspace cogutil)
+
 ADD_CXXTEST(HashMixUTest)
 ADD_CXXTEST(AtomTableUTest)
 ADD_CXXTEST(AtomSpaceUTest)

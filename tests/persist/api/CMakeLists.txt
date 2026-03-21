@@ -2,4 +2,5 @@
 ADD_CXXTEST(StorageAPIUTest)
 TARGET_LINK_LIBRARIES(StorageAPIUTest
 	atomspace
+	cogutil
 )

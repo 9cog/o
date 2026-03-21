@@ -13,9 +13,13 @@ LINK_LIBRARIES(
 
 ADD_CXXTEST(algorithmUTest)
 ADD_CXXTEST(CounterUTest)
+ADD_CXXTEST(ConcurrentQueueUTest)
+ADD_CXXTEST(ExceptionUTest)
 ADD_CXXTEST(LoggerUTest)
 ADD_CXXTEST(numericUTest)
+ADD_CXXTEST(PoolUTest)
 ADD_CXXTEST(randomUTest)
 ADD_CXXTEST(sigslotUTest)
+ADD_CXXTEST(TensorUTest)
 ADD_CXXTEST(WatermarkUTest)
 ADD_CXXTEST(zipfUTest)

@@ -6,7 +6,8 @@ LINK_DIRECTORIES(
 
 LINK_LIBRARIES(
 	server
-	${ATOMSPACE_LIBRARIES}
+	atomspace
+	cogutil
 )
 
 # Heh. No unit tests. The olld one didn't work. Removed.

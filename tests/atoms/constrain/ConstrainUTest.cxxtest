@@ -59,7 +59,7 @@ public:
 		Handle absent = createLink(std::move(oset), ABSENT_LINK);
 
 		// The AbsentLink should evaluate to true if the atom is not present
-		AbsentLink* al = AbsentLinkCast(absent);
+		auto al = AbsentLinkCast(absent);
 		TS_ASSERT(al != nullptr);
 		TS_ASSERT(al->bevaluate(as.get(), false) == true);
 
@@ -76,7 +76,7 @@ public:
 		Handle b = createNode(CONCEPT_NODE, "absent_b");
 		HandleSeq oset = {a, b};
 		Handle absent = createLink(std::move(oset), ABSENT_LINK);
-		AbsentLink* al = AbsentLinkCast(absent);
+		auto al = AbsentLinkCast(absent);
 
 		// Neither atom is present, should return true
 		TS_ASSERT(al->bevaluate(as.get(), false) == true);
@@ -93,7 +93,7 @@ public:
 		Handle a = createNode(CONCEPT_NODE, "absent_null");
 		HandleSeq oset = {a};
 		Handle absent = createLink(std::move(oset), ABSENT_LINK);
-		AbsentLink* al = AbsentLinkCast(absent);
+		auto al = AbsentLinkCast(absent);
 
 		// With nullptr atomspace, should return true
 		TS_ASSERT(al->bevaluate(nullptr, false) == true);
@@ -106,7 +106,7 @@ public:
 		Handle a = as->add_node(CONCEPT_NODE, "present_test");
 		HandleSeq oset = {a};
 		Handle present = createLink(std::move(oset), PRESENT_LINK);
-		PresentLink* pl = PresentLinkCast(present);
+		auto pl = PresentLinkCast(present);
 
 		TS_ASSERT(pl != nullptr);
 		// Atom is present, should return true
@@ -118,7 +118,7 @@ public:
 		Handle a = createNode(CONCEPT_NODE, "not_in_atomspace");
 		HandleSeq oset = {a};
 		Handle present = createLink(std::move(oset), PRESENT_LINK);
-		PresentLink* pl = PresentLinkCast(present);
+		auto pl = PresentLinkCast(present);
 
 		// Atom is not present, should return false
 		TS_ASSERT(pl->bevaluate(as.get(), false) == false);
@@ -130,7 +130,7 @@ public:
 		Handle b = as->add_node(CONCEPT_NODE, "present_b");
 		HandleSeq oset = {a, b};
 		Handle present = createLink(std::move(oset), PRESENT_LINK);
-		PresentLink* pl = PresentLinkCast(present);
+		auto pl = PresentLinkCast(present);
 
 		// Both atoms are present, should return true
 		TS_ASSERT(pl->bevaluate(as.get(), false) == true);
@@ -142,7 +142,7 @@ public:
 		Handle b = createNode(CONCEPT_NODE, "present_partial_b");
 		HandleSeq oset = {a, b};
 		Handle present = createLink(std::move(oset), PRESENT_LINK);
-		PresentLink* pl = PresentLinkCast(present);
+		auto pl = PresentLinkCast(present);
 
 		// Only one atom is present, should return false
 		TS_ASSERT(pl->bevaluate(as.get(), false) == false);
@@ -167,7 +167,7 @@ public:
 		Handle b = as->add_node(CONCEPT_NODE, "equal_test");
 		HandleSeq oset = {a, b};
 		Handle equal = createLink(std::move(oset), EQUAL_LINK);
-		EqualLink* el = EqualLinkCast(equal);
+		auto el = EqualLinkCast(equal);
 
 		// Same atoms should be equal
 		TS_ASSERT(el->bevaluate(as.get(), false) == true);
@@ -180,7 +180,7 @@ public:
 		Handle var = createNode(VARIABLE_NODE, "$x");
 		HandleSeq oset = {a, b, var};
 		Handle equal = createLink(std::move(oset), EQUAL_LINK);
-		EqualLink* el = EqualLinkCast(equal);
+		auto el = EqualLinkCast(equal);
 
 		// Different atoms should not be equal (ignoring variables)
 		TS_ASSERT(el->bevaluate(as.get(), false) == false);
@@ -191,7 +191,7 @@ public:
 		Handle a = createNode(CONCEPT_NODE, "single_elem");
 		HandleSeq oset = {a};
 		Handle equal = createLink(std::move(oset), EQUAL_LINK);
-		EqualLink* el = EqualLinkCast(equal);
+		auto el = EqualLinkCast(equal);
 
 		// Single element should always be equal to itself
 		TS_ASSERT(el->bevaluate(as.get(), false) == true);
@@ -201,7 +201,7 @@ public:
 	{
 		HandleSeq oset = {};
 		Handle equal = createLink(std::move(oset), EQUAL_LINK);
-		EqualLink* el = EqualLinkCast(equal);
+		auto el = EqualLinkCast(equal);
 
 		// Empty set should return true
 		TS_ASSERT(el->bevaluate(as.get(), false) == true);
@@ -213,7 +213,7 @@ public:
 		Handle var2 = createNode(VARIABLE_NODE, "$y");
 		HandleSeq oset = {var1, var2};
 		Handle equal = createLink(std::move(oset), EQUAL_LINK);
-		EqualLink* el = EqualLinkCast(equal);
+		auto el = EqualLinkCast(equal);
 
 		// Variables are skipped, so should return true
 		TS_ASSERT(el->bevaluate(as.get(), false) == true);
@@ -226,7 +226,7 @@ public:
 		Handle a = createNode(CONCEPT_NODE, "identical_test");
 		HandleSeq oset = {a, a};
 		Handle identical = createLink(std::move(oset), IDENTICAL_LINK);
-		IdenticalLink* il = IdenticalLinkCast(identical);
+		auto il = IdenticalLinkCast(identical);
 
 		TS_ASSERT(il->bevaluate(as.get(), false) == true);
 	}
@@ -237,7 +237,7 @@ public:
 		Handle b = createNode(CONCEPT_NODE, "identical_b");
 		HandleSeq oset = {a, b};
 		Handle identical = createLink(std::move(oset), IDENTICAL_LINK);
-		IdenticalLink* il = IdenticalLinkCast(identical);
+		auto il = IdenticalLinkCast(identical);
 
 		TS_ASSERT(il->bevaluate(as.get(), false) == false);
 	}
@@ -248,7 +248,7 @@ public:
 		Handle var = createNode(VARIABLE_NODE, "$x");
 		HandleSeq oset = {a, var};
 		Handle identical = createLink(std::move(oset), IDENTICAL_LINK);
-		IdenticalLink* il = IdenticalLinkCast(identical);
+		auto il = IdenticalLinkCast(identical);
 
 		// Only one constant, should return true
 		TS_ASSERT(il->bevaluate(as.get(), false) == true);
@@ -259,7 +259,7 @@ public:
 		Handle a = createNode(CONCEPT_NODE, "single_identical");
 		HandleSeq oset = {a};
 		Handle identical = createLink(std::move(oset), IDENTICAL_LINK);
-		IdenticalLink* il = IdenticalLinkCast(identical);
+		auto il = IdenticalLinkCast(identical);
 
 		TS_ASSERT(il->bevaluate(as.get(), false) == true);
 	}
@@ -284,7 +284,7 @@ public:
 		Handle c = createNode(CONCEPT_NODE, "excl_c");
 		HandleSeq oset = {a, b, c};
 		Handle exclusive = createLink(std::move(oset), EXCLUSIVE_LINK);
-		ExclusiveLink* el = ExclusiveLinkCast(exclusive);
+		auto el = ExclusiveLinkCast(exclusive);
 
 		// All different should return true
 		TS_ASSERT(el->bevaluate(as.get(), false) == true);
@@ -310,12 +310,12 @@ public:
 		Handle y = createNode(VARIABLE_NODE, "$y");
 		Handle a = createNode(CONCEPT_NODE, "alpha_const");
 
-		Handle expr1 = createLink({a, x}, LIST_LINK);
-		Handle expr2 = createLink({a, y}, LIST_LINK);
+		Handle expr1 = createLink(HandleSeq{a, x}, LIST_LINK);
+		Handle expr2 = createLink(HandleSeq{a, y}, LIST_LINK);
 
 		HandleSeq oset = {expr1, expr2};
 		Handle alpha = createLink(std::move(oset), ALPHA_EQUAL_LINK);
-		AlphaEqualLink* al = AlphaEqualLinkCast(alpha);
+		auto al = AlphaEqualLinkCast(alpha);
 
 		// Should be alpha-equivalent (same structure, different var names)
 		TS_ASSERT(al->bevaluate(as.get(), false) == true);
@@ -327,12 +327,12 @@ public:
 		Handle a = createNode(CONCEPT_NODE, "alpha_a");
 		Handle b = createNode(CONCEPT_NODE, "alpha_b");
 
-		Handle expr1 = createLink({a, x}, LIST_LINK);
-		Handle expr2 = createLink({b, x}, LIST_LINK);
+		Handle expr1 = createLink(HandleSeq{a, x}, LIST_LINK);
+		Handle expr2 = createLink(HandleSeq{b, x}, LIST_LINK);
 
 		HandleSeq oset = {expr1, expr2};
 		Handle alpha = createLink(std::move(oset), ALPHA_EQUAL_LINK);
-		AlphaEqualLink* al = AlphaEqualLinkCast(alpha);
+		auto al = AlphaEqualLinkCast(alpha);
 
 		// Different constants, not alpha-equivalent
 		TS_ASSERT(al->bevaluate(as.get(), false) == false);
@@ -343,7 +343,7 @@ public:
 		Handle a = createNode(CONCEPT_NODE, "single_alpha");
 		HandleSeq oset = {a};
 		Handle alpha = createLink(std::move(oset), ALPHA_EQUAL_LINK);
-		AlphaEqualLink* al = AlphaEqualLinkCast(alpha);
+		auto al = AlphaEqualLinkCast(alpha);
 
 		// Single element always alpha-equal to itself
 		TS_ASSERT(al->bevaluate(as.get(), false) == true);
@@ -356,7 +356,7 @@ public:
 		Handle a = createNode(CONCEPT_NODE, "closed_test");
 		HandleSeq oset = {a};
 		Handle isclosed = createLink(std::move(oset), IS_CLOSED_LINK);
-		IsClosedLink* icl = IsClosedLinkCast(isclosed);
+		auto icl = IsClosedLinkCast(isclosed);
 
 		// ConceptNode has no free variables, is closed
 		TS_ASSERT(icl->bevaluate(as.get(), false) == true);
@@ -367,7 +367,7 @@ public:
 		Handle var = createNode(VARIABLE_NODE, "$x");
 		HandleSeq oset = {var};
 		Handle isclosed = createLink(std::move(oset), IS_CLOSED_LINK);
-		IsClosedLink* icl = IsClosedLinkCast(isclosed);
+		auto icl = IsClosedLinkCast(isclosed);
 
 		// VariableNode is not closed
 		TS_ASSERT(icl->bevaluate(as.get(), false) == false);
@@ -377,10 +377,10 @@ public:
 	{
 		Handle var = createNode(VARIABLE_NODE, "$x");
 		Handle a = createNode(CONCEPT_NODE, "nested_const");
-		Handle list = createLink({a, var}, LIST_LINK);
+		Handle list = createLink(HandleSeq{a, var}, LIST_LINK);
 		HandleSeq oset = {list};
 		Handle isclosed = createLink(std::move(oset), IS_CLOSED_LINK);
-		IsClosedLink* icl = IsClosedLinkCast(isclosed);
+		auto icl = IsClosedLinkCast(isclosed);
 
 		// Link contains a variable, not closed
 		TS_ASSERT(icl->bevaluate(as.get(), false) == false);
@@ -392,7 +392,7 @@ public:
 		Handle b = createNode(CONCEPT_NODE, "closed_b");
 		HandleSeq oset = {a, b};
 		Handle isclosed = createLink(std::move(oset), IS_CLOSED_LINK);
-		IsClosedLink* icl = IsClosedLinkCast(isclosed);
+		auto icl = IsClosedLinkCast(isclosed);
 
 		// Both are closed
 		TS_ASSERT(icl->bevaluate(as.get(), false) == true);
@@ -404,7 +404,7 @@ public:
 		Handle var = createNode(VARIABLE_NODE, "$x");
 		HandleSeq oset = {a, var};
 		Handle isclosed = createLink(std::move(oset), IS_CLOSED_LINK);
-		IsClosedLink* icl = IsClosedLinkCast(isclosed);
+		auto icl = IsClosedLinkCast(isclosed);
 
 		// One is not closed
 		TS_ASSERT(icl->bevaluate(as.get(), false) == false);
