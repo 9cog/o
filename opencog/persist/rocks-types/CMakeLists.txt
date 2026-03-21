@@ -23,6 +23,14 @@ TARGET_LINK_LIBRARIES(persist-rocks-types
 	${ATOMSPACE_LIBRARIES}
 )
 
+# In unified builds, ATOMSPACE_LIBRARIES / ATOMSPACE_STORAGE_LIBRARIES may
+# be unset; add the cmake targets directly so the required symbols are
+# available without polluting the install-time export interface.
+TARGET_LINK_LIBRARIES(persist-rocks-types PRIVATE
+	storage-types
+	atomspace
+)
+
 ADD_DEPENDENCIES(persist-rocks-types persist_rocks_atom_types)
 
 # Install targets
