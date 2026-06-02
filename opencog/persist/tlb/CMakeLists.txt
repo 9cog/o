@@ -20,7 +20,7 @@ INSTALL (FILES
 
 # --------------------------------
 
-ADD_LIBRARY (guile-uuid UuidSCM.cc)
+ADD_LIBRARY (guile-uuid SHARED UuidSCM.cc)
 
 TARGET_LINK_LIBRARIES(guile-uuid SHARED
 	tlb

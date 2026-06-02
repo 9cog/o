@@ -12,7 +12,7 @@ ADD_GUILE_MODULE (FILES
 
 # --------------------------------
 
-ADD_LIBRARY (logger LoggerSCM.cc)
+ADD_LIBRARY (logger SHARED LoggerSCM.cc)
 
 TARGET_LINK_LIBRARIES(logger
 	smob
@@ -32,7 +32,7 @@ ADD_DEPENDENCIES(logger opencog_atom_types)
 
 # --------------------------------
 
-ADD_LIBRARY (randgen RandGenSCM.cc)
+ADD_LIBRARY (randgen SHARED RandGenSCM.cc)
 
 TARGET_LINK_LIBRARIES(randgen
 	smob
@@ -48,7 +48,7 @@ ADD_GUILE_MODULE (FILES
 
 # --------------------------------
 
-ADD_LIBRARY (type-utils TypeUtilsSCM.cc)
+ADD_LIBRARY (type-utils SHARED TypeUtilsSCM.cc)
 
 TARGET_LINK_LIBRARIES(type-utils
 	atomcore
