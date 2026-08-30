@@ -12,9 +12,18 @@ INCLUDE_DIRECTORIES(
 )
 
 # Need to be able to find opencog/atomspace.pxd
-# and so the location of that goes in the -I flag
+# and so the location of that goes in the -I flag.
+# ATOMSPACE_INCLUDE_DIR is only defined by the installed
+# AtomSpaceConfig.cmake (pointing at the install prefix); in this
+# unified in-tree build it is empty, so fall back to the source tree
+# where opencog/cython/opencog/atomspace.pxd actually lives.
+IF (ATOMSPACE_INCLUDE_DIR)
+	SET(CYTHON_PXD_INCLUDE_DIR "${ATOMSPACE_INCLUDE_DIR}/opencog/cython/")
+ELSE (ATOMSPACE_INCLUDE_DIR)
+	SET(CYTHON_PXD_INCLUDE_DIR "${CMAKE_SOURCE_DIR}/opencog/cython/")
+ENDIF (ATOMSPACE_INCLUDE_DIR)
 SET(CYTHON_FLAGS "-3" "-f" "-Wextra"
-	"-I${ATOMSPACE_INCLUDE_DIR}/opencog/cython/")
+	"-I${CYTHON_PXD_INCLUDE_DIR}")
 
 # The python module name is taken from the pyx filename. Thus, the file
 # storage.pyx means that module name will be 'opencog.storage'. This will
