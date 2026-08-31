@@ -19,6 +19,10 @@ ENDIF (HAVE_GUILE)
 # ============================================================
 ADD_SUBDIRECTORY(util)
 
+# Forward COGUTIL_LIBRARY (set in opencog/util/CMakeLists.txt) to the
+# root scope so that tests/ and examples/ can use it as well.
+SET(COGUTIL_LIBRARY ${COGUTIL_LIBRARY} PARENT_SCOPE)
+
 # ============================================================
 # atomspace components
 # ============================================================

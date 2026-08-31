@@ -24,6 +24,16 @@ ADD_LIBRARY(cogutil SHARED
 	${WIN32_GETOPT_FILES}
 )
 
+# In the unified in-tree build, COGUTIL_LIBRARY is not provided by any
+# FIND_PACKAGE(CogUtil) call, so it would otherwise be empty and every
+# TARGET_LINK_LIBRARIES(... ${COGUTIL_LIBRARY}) below would silently
+# drop libcogutil, leaving StandardException typeinfo unresolved until
+# dlopen time. Point it at the in-tree target (mirrors the convention
+# used by the standalone cogutil repo). PARENT_SCOPE makes it visible
+# in opencog/; the top-level CMakeLists.txt forwards it to the root
+# scope so that tests/ and examples/ see it too.
+SET(COGUTIL_LIBRARY cogutil PARENT_SCOPE)
+
 IF (HAVE_BFD AND HAVE_IBERTY)
 	check_symbol_exists(bfd_get_section_flags "bfd.h" HAVE_DECL_BFD_GET_SECTION_FLAGS)
 	check_symbol_exists(bfd_section_flags "bfd.h" HAVE_DECL_BFD_SECTION_FLAGS)
@@ -131,5 +141,8 @@ IF (CYGWIN)
         COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_BINARY_DIR}/opencog/util/cygcogutil.dll ${CMAKE_BINARY_DIR}/tests/util/ 
         MAIN_DEPENDENCY cogutil)
 ELSE (CYGWIN) #Linux
-    INSTALL(TARGETS cogutil LIBRARY DESTINATION "lib${LIB_DIR_SUFFIX}/opencog")
+	# Must be exported with AtomSpaceTargets: targets in that export set
+	# (atomspace, smob, ...) link against cogutil, and CMake requires
+	# every linked target to belong to some export set.
+	INSTALL(TARGETS cogutil EXPORT AtomSpaceTargets LIBRARY DESTINATION "lib${LIB_DIR_SUFFIX}/opencog")
 ENDIF (CYGWIN)
